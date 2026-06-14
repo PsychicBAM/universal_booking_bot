@@ -1,0 +1,11 @@
+services:
+  booking-bot:
+    build: .
+    container_name: universal_booking_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///data/booking_bot.db

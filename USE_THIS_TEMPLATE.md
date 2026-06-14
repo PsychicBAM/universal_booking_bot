@@ -27,7 +27,7 @@ When the user asks to create a new client bot from **universal_booking_bot**:
    - `ADMIN_IDS` — Telegram user ID(s), comma-separated (replace `{{ADMIN_IDS}}`)
    - Optional: `TIMEZONE`, `DEFAULT_LANGUAGE`, `CONTACT_ADMIN_USERNAME`
 
-4. **Optional — Google Calendar** (see README.md):
+4. **Optional — Google Calendar** — see [README.md](README.md#google-calendar-setup) or [README_RU.md](README_RU.md#настройка-google-calendar):
    - Set `GOOGLE_CALENDAR_ENABLED=true`
    - Fill `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `GOOGLE_REDIRECT_URI`
 

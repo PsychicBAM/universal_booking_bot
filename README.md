@@ -1,62 +1,99 @@
 # Universal Booking Bot
 
+🇷🇺 **Russian documentation:** [README_RU.md](README_RU.md)
+
 Telegram booking bot for service providers — lessons, consultations, beauty, medical, and any bookable service.
 
 **Repository:** https://github.com/PsychicBAM/universal_booking_bot
 
-## Server install (Linux)
+---
 
-Requires Docker, Docker Compose, and git:
+## Overview
+
+Clients book appointments in Telegram. Admins manage services, schedule, media, fixed locations, bookings, reminders, and optional Google Calendar sync — all from the bot.
+
+| Area | Capabilities |
+|------|----------------|
+| **Client** | Book appointments, service photo/video cards, fixed locations, client address + comment, my bookings, reschedule/edit, cancel, RU/EN |
+| **Admin** | Services CRUD, archive/restore, duration/buffer, media (5 photos + 1 video), service locations, working hours, unavailable dates, bookings, bot settings, reminders |
+| **Engine** | Availability (working hours + blocks + bookings + buffer + Google Calendar busy times), SQLite migrations, Docker |
+
+---
+
+## One-command install (Linux server)
+
+Requires **Docker**, **Docker Compose**, and **git**:
 
 ```bash
 bash <(curl -Ls https://raw.githubusercontent.com/PsychicBAM/universal_booking_bot/main/install.sh)
 ```
 
-Installs to `/opt/universal_booking_bot`. See [DEPLOYMENT.md](DEPLOYMENT.md) for update, backup, and operations.
+Install path: `/opt/universal_booking_bot`
 
-## Features
-
-| Area | Capabilities |
-|------|----------------|
-| **Client** | Book appointments, connected photo/video service cards, address + comment, my bookings, reschedule/edit, cancel, language RU/EN |
-| **Admin** | Services CRUD, archive/restore, duration/buffer buttons, media (5 photos + 1 video), working hours, unavailable dates, bookings, bot settings, reminders |
-| **Engine** | Availability (WH + blocks + bookings + buffer + Google Calendar), reminders, SQLite migrations, Docker |
-
-## Quick start (Docker)
+After install, edit `.env` (`BOT_TOKEN`, `ADMIN_IDS`), then:
 
 ```bash
-git clone https://github.com/PsychicBAM/universal_booking_bot.git
-cd universal_booking_bot
-copy .env.example .env
-# Set BOT_TOKEN and ADMIN_IDS in .env
-docker compose down
+cd /opt/universal_booking_bot
 docker compose up -d --build
 docker compose logs -f booking-bot
 ```
 
-Data persists in `./data/booking_bot.db` (mounted volume).
+**More:** [QUICK_START.md](QUICK_START.md) · [DEPLOYMENT.md](DEPLOYMENT.md)
 
-## Configure `.env`
+---
+
+## Docker run (local / manual clone)
+
+```bash
+git clone https://github.com/PsychicBAM/universal_booking_bot.git
+cd universal_booking_bot
+cp .env.example .env    # Windows: copy .env.example .env
+# Edit .env — set BOT_TOKEN and ADMIN_IDS
+docker compose up -d --build
+docker compose logs -f booking-bot
+```
+
+Database: `./data/booking_bot.db` (Docker volume).
+
+---
+
+## Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `BOT_TOKEN` | From @BotFather |
-| `ADMIN_IDS` | Comma-separated Telegram user IDs |
+| `BOT_TOKEN` | From @BotFather (**required**) |
+| `ADMIN_IDS` | Comma-separated Telegram user IDs (**required**) |
 | `DATABASE_URL` | Default `sqlite+aiosqlite:///data/booking_bot.db` |
 | `TIMEZONE` | e.g. `Europe/Moscow` |
 | `DEFAULT_LANGUAGE` | `ru` or `en` |
 | `DEFAULT_SLOT_STEP_MINUTES` | Slot grid (default 30) |
 | `BOOKING_DAYS_AHEAD` | How far clients can book (default 30) |
-| `CANCEL_BOOKING_HOURS_BEFORE` | Client cancel window |
-| `RESCHEDULE_BOOKING_HOURS_BEFORE` | Client reschedule window (defaults to cancel window if unset) |
+| `CANCEL_BOOKING_HOURS_BEFORE` | Client cancel window (default 2) |
+| `RESCHEDULE_BOOKING_HOURS_BEFORE` | Reschedule window (defaults to cancel window) |
+| `CONTACT_ADMIN_USERNAME` | Optional @username shown to clients |
 | `REMINDERS_ENABLED` | `true` / `false` |
 | `CLIENT_REMINDER_1_MINUTES` | Default 1440 (24h) |
 | `CLIENT_REMINDER_2_MINUTES` | Default 120 (2h) |
 | `ADMIN_REMINDER_MINUTES` | Default 60 |
-| `REMINDER_TEST_MODE` | Quick test in minutes |
-| `TEST_CLIENT_REMINDER_MINUTES` | Default 5 |
-| `TEST_ADMIN_REMINDER_MINUTES` | Default 3 |
-| `GOOGLE_CALENDAR_*` | Optional calendar sync — see [Google Calendar setup](#google-calendar-setup) |
+| `GOOGLE_CALENDAR_*` | Optional — see [Google Calendar setup](#google-calendar-setup) below |
+
+Copy from `.env.example`. **Never commit `.env` to git.**
+
+---
+
+## Admin setup (first launch)
+
+1. Open bot → `/start`
+2. Send `/admin` from an admin Telegram account (`ADMIN_IDS`)
+3. **Services** — create service (name, description, duration, buffer, price)
+4. **Service locations** (optional) — fixed places client chooses at booking
+5. **Media** — add photos/video, set cover, toggle client visibility
+6. **Working hours** — set days and times clients can book
+7. **Unavailable dates** — block full days or time ranges
+8. **Bot settings** — auto-confirm, reminders, contact username, language, Google Calendar
+9. Test a full client booking end-to-end
+
+---
 
 ## Google Calendar setup
 
@@ -68,15 +105,13 @@ Google Calendar is **optional**. The bot works fully without it.
 GOOGLE_CALENDAR_ENABLED=false
 ```
 
-In this mode:
+When disabled:
 
-- the bot works without Google Calendar
-- bookings are saved only in the local database
-- no Google credentials are required
+- No Google credentials required
+- Bookings saved only in local SQLite database
+- Availability uses working hours, unavailable dates, and existing bookings only
 
-### Enable Google Calendar
-
-Set these values in `.env`:
+### Required `.env` values (when enabled)
 
 ```env
 GOOGLE_CALENDAR_ENABLED=true
@@ -87,248 +122,188 @@ GOOGLE_REFRESH_TOKEN=your_refresh_token
 GOOGLE_CALENDAR_ID=primary
 ```
 
-### 1. Create Google Cloud project
+### Step 1 — Create Google Cloud project
 
 1. Open [Google Cloud Console](https://console.cloud.google.com/).
-2. Create a new project, for example: **Booking Bot**.
+2. Create a project (e.g. **Booking Bot**).
 3. Enable **Google Calendar API** for this project.
 
-### 2. Configure OAuth consent screen
+### Step 2 — Configure OAuth consent screen
 
 1. Open **Google Auth Platform** → **OAuth consent screen**.
-2. Choose **External** or **Internal** depending on account type.
-3. Fill app name, support email, and developer contact email.
-4. Add your Google account as a **test user** if the app is in testing mode.
+2. Choose **External** (or **Internal** for Workspace).
+3. Fill app name, support email, developer contact.
+4. If app is in **Testing** mode: **Audience** → **Test users** → **Add users** → add your Gmail.
 
-### 3. Create OAuth client
+### Step 3 — Create OAuth client (Web application)
 
-1. Open **Credentials** → **OAuth clients**.
-2. Create a new OAuth client.
-3. For simple testing, choose **Web application** or **Desktop app**.
-4. If using OAuth 2.0 Playground, add this redirect URI:
+1. **Credentials** → **Create credentials** → **OAuth client ID**.
+2. Application type: **Web application**.
+3. Add **Authorized redirect URI** exactly:
 
-   `https://developers.google.com/oauthplayground`
+   ```
+   https://developers.google.com/oauthplayground
+   ```
 
-5. Save the client.
-6. Copy:
-   - **Client ID**
-   - **Client Secret**
+4. Save. Copy **Client ID** and **Client Secret** into `.env`.
 
-Use them in:
-
-```env
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-```
-
-### 4. Get refresh token using OAuth 2.0 Playground
+### Step 4 — Get Refresh token (OAuth 2.0 Playground)
 
 1. Open [Google OAuth 2.0 Playground](https://developers.google.com/oauthplayground).
-2. Click the **settings** icon (gear).
-3. Enable **Use your own OAuth credentials**.
-4. Paste your **Client ID** and **Client Secret**.
-5. Select or enter this scope:
+2. Click **gear** (settings) → enable **Use your own OAuth credentials**.
+3. Paste **Client ID** and **Client Secret**.
+4. Scope: `https://www.googleapis.com/auth/calendar`
+5. **Authorize APIs** → sign in → allow.
+6. **Exchange authorization code for tokens**.
+7. Copy **Refresh token** (not Access token) into `.env` as `GOOGLE_REFRESH_TOKEN`.
 
-   `https://www.googleapis.com/auth/calendar`
+#### Access token vs Refresh token
 
-6. Click **Authorize APIs**.
-7. Sign in with the Google account that owns the calendar.
-8. Allow access.
-9. Click **Exchange authorization code for tokens**.
-10. Copy the **Refresh token**.
+| Token | Purpose |
+|-------|---------|
+| **Access token** | Temporary (~1 hour). Used for API calls. **Do not put in `.env`.** |
+| **Refresh token** | Long-lived. Bot uses it to obtain new access tokens. **This goes in `.env`.** |
 
-Use it in:
-
-```env
-GOOGLE_REFRESH_TOKEN=
-```
-
-### 5. Calendar ID
-
-For the main calendar, use:
+### Step 5 — Calendar ID
 
 ```env
 GOOGLE_CALENDAR_ID=primary
 ```
 
-If using a separate calendar:
+For a dedicated calendar: Google Calendar → Settings → select calendar → copy **Calendar ID**.
 
-1. Open [Google Calendar](https://calendar.google.com/).
-2. Open calendar **Settings**.
-3. Find **Calendar ID**.
-4. Put it into `GOOGLE_CALENDAR_ID`.
-
-### 6. Restart the bot
-
-After editing `.env`, restart Docker:
+### Step 6 — Restart Docker
 
 ```bash
+cd /opt/universal_booking_bot   # or your project folder
 docker compose down
 docker compose up -d --build
 docker compose logs -f booking-bot
 ```
 
-### 7. Test connection in Telegram
+### Step 7 — Enable in Telegram admin settings
 
-In Telegram:
+1. `/admin` → **⚙️ Bot settings** → **📅 Google Calendar**
+2. **📋 Test connection** — must succeed
+3. Turn **sync ON** on the same screen
 
-1. `/admin`
-2. **⚙️ Bot settings**
-3. **📅 Google Calendar**
-4. **📋 Test connection**
+### Step 8 — Verify behavior
 
-If successful, enable Google Calendar sync from the same screen.
+| Test | Expected |
+|------|----------|
+| **Busy slots** | Create a personal event in Google Calendar during working hours → that slot hidden from clients |
+| **Event creation** | Confirm a booking → event appears in Google Calendar |
+| **Event update** | Client reschedules or edits location/address → event updated |
+| **Event deletion** | Cancel booking → Google event removed |
 
-### 8. What Google Calendar does
-
-When enabled and connected:
-
-- busy Google Calendar events hide unavailable slots from clients
-- confirmed bookings create Google Calendar events
-- cancelled bookings delete related Google Calendar events
-- when a client reschedules or edits location/address/comment, the existing event is updated (or recreated if missing)
-- event location priority: client address → fixed service location address → empty
-- client name, phone, service, locations, address, comment, and booking ID are added to the event description
-
-### Client booking edits
-
-From **My bookings**, clients can open a booking and:
-
-- **Reschedule** — pick a new date/time (same availability rules; current booking is excluded from conflict checks)
-- **Change service location** — if the service has active fixed locations
-- **Change client address / comment** — if the service requires client address
-
-Limitations:
-
-- Only pending/confirmed bookings can be edited
-- Reschedule is blocked within `RESCHEDULE_BOOKING_HOURS_BEFORE` (defaults to `CANCEL_BOOKING_HOURS_BEFORE`)
-- Cancel during an edit flow returns to the booking detail — the booking is not deleted
-- Google Calendar sync failures do not roll back local booking changes
-
-### 9. Safety notes
-
-Never share:
-
-- `BOT_TOKEN`
-- `GOOGLE_CLIENT_SECRET`
-- `GOOGLE_REFRESH_TOKEN`
-
-Do not commit `.env` to Git. Only `.env.example` should be in the template.
-
-### 10. Troubleshooting
-
-**Problem:** Google Calendar is enabled but connection fails.
-
-**Check:**
-
-- `GOOGLE_CLIENT_ID` is correct
-- `GOOGLE_CLIENT_SECRET` is correct
-- `GOOGLE_REFRESH_TOKEN` is not empty
-- Google Calendar API is enabled
-- OAuth consent screen has the correct test user
-- `GOOGLE_CALENDAR_ID` is correct
-- redirect URI matches OAuth client settings
-
-**Problem:** Bot works but calendar events are not created.
-
-**Check:**
-
-- `GOOGLE_CALENDAR_ENABLED=true`
-- Google Calendar is enabled in Bot settings
-- Test connection succeeds
-- booking is **confirmed**, not pending
-
-**Problem:** Busy times are not hidden.
-
-**Check:**
-
-- calendar event exists in the same calendar ID
-- event time zone is correct
-- bot `TIMEZONE` matches expected local timezone
-- Test connection succeeds
-
-### Check script
-
-```bash
-python scripts/check_google_calendar.py
-```
-
-Or inside Docker:
+Check script:
 
 ```bash
 docker compose exec booking-bot python scripts/check_google_calendar.py
 ```
 
-## Manual test checklist
+### What Google Calendar does when enabled
 
-### Admin service flow
-1. `/admin` → Services → Add service (name, description, duration, buffer, price)
-2. Toggle client address, add photos/video, set cover, preview
-3. Toggle media display OFF/ON, edit duration/buffer
-4. Archive → restore service
+- Google busy times hide unavailable slots
+- Confirmed bookings create calendar events
+- Cancelled bookings delete events
+- Client edits update existing events (or recreate if missing)
+- Event location: client address → fixed service location address → empty
+- Description includes client, phone, service, datetime, locations, comment, booking ID
 
-### Client booking with media
-1. `/start` → Book → open service (connected photo card + buttons)
-2. Book → date → time → name → phone → (address/comment) → confirm
-3. Press **Cancel** at each step → main menu, no unhandled updates
+### Google Calendar troubleshooting
 
-### Working hours & unavailable
-- Set Mon 10:00–19:00, Sat off, presets
-- Block tomorrow / time range → verify client slots update
+#### Problem: Error 400: redirect_uri_mismatch
 
-### Buffer
-- Service 60 min + 30 min buffer → book 09:00 → 10:00 slot hidden, 10:30 available
+**Reason:** The redirect URI in Google Cloud does not match OAuth Playground.
 
-### Reminders (test mode)
-- Bot settings → enable test mode, 5 min client / 3 min admin
-- Confirmed booking 6–10 min ahead → both receive reminders once
+**Fix:** Create OAuth Client type **Web application** and add **Authorized redirect URI** exactly:
 
-### Language
-- Switch RU/EN — UI changes, service names stay as entered
-
-### Security
-- Client cannot cancel others' bookings
-- Archived/inactive services hidden from client list
-- Non-admin gets access denied on admin actions
-
-### Logs
-```bash
-docker compose logs -f booking-bot
 ```
-Expect no `Update is not handled`, tracebacks, or IntegrityError during normal use.
+https://developers.google.com/oauthplayground
+```
 
-## First-client deployment checklist
+---
 
-1. Copy project folder for new client
-2. New `BOT_TOKEN`, `ADMIN_IDS`, `CONTACT_ADMIN_USERNAME` in `.env`
-3. Fresh `data/` volume or empty database
-4. `docker compose up -d --build`
-5. Admin: create services, working hours, unavailable dates
-6. Bot settings: `auto_confirm`, reminders, contact username
-7. Test full client booking end-to-end
-8. Optional: [Google Calendar setup](#google-calendar-setup)
+#### Problem: Access blocked: app has not completed the Google verification process / Error 403: access_denied
 
-## Database migrations
+**Reason:** The app is in Testing mode and the email is not added to Test users.
 
-Startup runs `create_all` + safe SQLite `ALTER TABLE`. **Existing data is never deleted.**
+**Fix:** Google Auth Platform → **Audience** → **Test users** → **Add users** → add your Gmail.
+
+---
+
+#### Problem: Access token expires
+
+**Explanation:** Access token is temporary and usually expires in about 1 hour. The bot needs **Refresh token** in `.env`, not Access token.
+
+---
+
+#### Problem: No refresh token appears
+
+**Fix:** In OAuth Playground enable **Use your own OAuth credentials**, use **Offline access** if visible, **Force prompt** / **Consent** if available, or revoke old app permission from [Google Account permissions](https://myaccount.google.com/permissions) and authorize again.
+
+---
+
+#### Problem: invalid_grant
+
+**Fix:** Generate a new refresh token and make sure Client ID/Secret are from the **same** Google Cloud project.
+
+---
+
+#### Other checks
+
+| Symptom | Check |
+|---------|-------|
+| Connection fails | Client ID, Secret, Refresh token; Calendar API enabled; test user added |
+| Events not created | `GOOGLE_CALENDAR_ENABLED=true`; sync ON in bot settings; booking **confirmed** |
+| Busy times not hidden | Same `GOOGLE_CALENDAR_ID`; `TIMEZONE` matches; event in that calendar |
+| Sync errors in logs | Run `check_google_calendar.py`; calendar failures do not block local bookings |
+
+Full Russian guide: [README_RU.md#настройка-google-calendar](README_RU.md#настройка-google-calendar)
+
+---
+
+## Security — never commit or share
+
+- `.env`
+- `BOT_TOKEN`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REFRESH_TOKEN`
+- `data/*.db` and any database files
+
+Only `.env.example` with placeholders belongs in the repository.
+
+---
+
+## Update and backup (server)
+
+| Task | Command |
+|------|---------|
+| **Update** | `bash /opt/universal_booking_bot/update.sh` |
+| **Backup DB** | `bash /opt/universal_booking_bot/backup.sh` |
+| **View logs** | `cd /opt/universal_booking_bot && docker compose logs -f booking-bot` |
+
+Details: [DEPLOYMENT.md](DEPLOYMENT.md)
+
+---
+
+## Documentation index
+
+| English | Russian |
+|---------|---------|
+| [README.md](README.md) | [README_RU.md](README_RU.md) |
+| [QUICK_START.md](QUICK_START.md) | [QUICK_START_RU.md](QUICK_START_RU.md) |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | [DEPLOYMENT_RU.md](DEPLOYMENT_RU.md) |
+| [NOTES.md](NOTES.md) | [NOTES_RU.md](NOTES_RU.md) |
+
+---
 
 ## Known limitations
 
 - No Alembic — additive SQLite migrations only
-- Google OAuth manual setup — refresh token via OAuth Playground (see Google Calendar setup); in-bot OAuth planned for future
+- Google OAuth manual setup (no in-bot OAuth flow yet)
 - Media via Telegram `file_id` only
 - Pagination: 14 dates, 20 bookings per screen
-- Buffer may extend past closing for last slot (overlap blocking only)
-- Concurrent double-book rare race (re-check at confirm, not DB lock)
 
-See [NOTES.md](NOTES.md) for implementation details and roadmap.
-
-## Server operations
-
-| Task | Command |
-|------|---------|
-| View logs | `cd /opt/universal_booking_bot && docker compose logs -f booking-bot` |
-| Update | `bash /opt/universal_booking_bot/update.sh` |
-| Backup DB | `bash /opt/universal_booking_bot/backup.sh` |
-
-Quick reference: [QUICK_START.md](QUICK_START.md) · Full guide: [DEPLOYMENT.md](DEPLOYMENT.md)
+See [NOTES.md](NOTES.md) for implementation details.

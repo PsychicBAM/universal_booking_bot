@@ -17,3 +17,4 @@ venv/
 backups/
 _temp/
 *.bak
+USE_THIS_TEMPLATE.md

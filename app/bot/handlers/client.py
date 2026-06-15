@@ -12,11 +12,10 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.i18n import t
 from app.bot.utils.callbacks import safe_callback_answer
-from app.bot.utils.service_helpers import is_service_bookable
+from app.bot.utils.service_helpers import client_service_unavailable_key, is_service_bookable
 from app.bot.utils.telegram_ui import edit_or_send
 from app.bot.keyboards import (
     BOOK_APPOINTMENT_TEXTS,
-    CONTACT_ADMIN_TEXTS,
     MY_BOOKINGS_TEXTS,
     SKIP_TEXTS,
     admin_menu,
@@ -46,6 +45,7 @@ from app.bot.keyboards.service_location_kb import client_locations_kb
 from app.services.service_media_service import send_service_presentation
 from app.services.availability_service import AvailabilityService
 from app.services.booking_service import BookingService
+from app.services.exceptions import SlotUnavailableError
 from app.services.calendar_service import CalendarService
 from app.services.language_service import get_user_language
 from app.utils.datetime_utils import now_local, slot_from_timestamp, to_local_naive
@@ -59,11 +59,13 @@ def _parse_service_id(callback_data: str) -> int:
     return int(callback_data.rsplit(":", 1)[1])
 
 
-def _booking_summary(data: dict, lang: str, *, show_location_comment: bool = False) -> str:
+def _booking_summary(data: dict, lang: str) -> str:
     slot = slot_from_timestamp(data["slot_ts"])
     service_name = escape(str(data.get("service_name") or ""))
-    client_name = escape(str(data["client_name"]))
+    client_name = escape(str(data.get("client_name") or ""))
     phone = escape(str(data.get("client_phone") or "")) or t(lang, "not_provided")
+    requires_location = bool(data.get("requires_location"))
+    ask_client_comment = bool(data.get("ask_client_comment"))
     lines = [
         f"{t(lang, 'confirm_booking')}\n",
         f"{t(lang, 'label_service')}: {service_name}",
@@ -79,12 +81,38 @@ def _booking_summary(data: dict, lang: str, *, show_location_comment: bool = Fal
             lines.append(
                 t(lang, "address_label", address=escape(str(data["service_location_address"])))
             )
-    if show_location_comment:
-        location = escape(data["location_text"]) if data.get("location_text") else t(lang, "not_provided")
-        comment = escape(data["client_comment"]) if data.get("client_comment") else t(lang, "not_provided")
+    if requires_location or data.get("location_text"):
+        location = (
+            escape(str(data["location_text"]))
+            if data.get("location_text")
+            else t(lang, "not_provided")
+        )
         lines.append(t(lang, "client_address_label", location=location))
-        lines.append(t(lang, "comment_label", comment=comment))
+    if ask_client_comment or data.get("client_comment"):
+        if data.get("client_comment"):
+            comment = escape(str(data["client_comment"]))
+        elif ask_client_comment:
+            comment = t(lang, "comment_not_provided")
+        else:
+            comment = escape(str(data["client_comment"]))
+        lines.append(t(lang, "service_comment_label", comment=comment))
     return "\n".join(lines)
+
+
+async def _prompt_comment(message: Message, state: FSMContext, lang: str) -> None:
+    await state.set_state(BookingStates.entering_comment)
+    await message.answer(
+        f"{t(lang, 'ask_comment_prompt')}\n{t(lang, 'comment_optional_hint')}",
+        reply_markup=skip_cancel_kb(lang),
+    )
+
+
+async def _show_confirmation(message: Message, state: FSMContext, lang: str) -> None:
+    await state.set_state(BookingStates.confirming)
+    await message.answer(
+        _booking_summary(await state.get_data(), lang),
+        reply_markup=confirm_kb(lang),
+    )
 
 
 async def _start_date_selection(
@@ -110,7 +138,7 @@ async def _start_date_selection(
             async with async_session_factory() as session:
                 service = await ServiceRepository(session).get_by_id(service_id)
                 if not is_service_bookable(service):
-                    await callback.message.answer(t(lang, "not_found"))
+                    await callback.message.answer(t(lang, client_service_unavailable_key(service)))
                     await state.clear()
                     return
                 t_service = time.perf_counter() - t0
@@ -189,25 +217,10 @@ async def _notify_admins_new_booking(bot, booking, service, lang: str) -> None:
             pass
 
 
-@router.message(F.text.in_(CONTACT_ADMIN_TEXTS))
-async def contact_admin(message: Message, lang: str) -> None:
-    settings = get_settings()
-    username = settings.contact_admin_username
-    if username:
-        await message.answer(t(lang, "contact_admin_msg", username=username.lstrip("@")))
-    else:
-        async with async_session_factory() as session:
-            stored = await SettingsRepository(session).get("contact_admin_username")
-        if stored:
-            await message.answer(t(lang, "contact_admin_msg", username=stored.lstrip("@")))
-        else:
-            await message.answer(t(lang, "contact_not_configured"))
-
-
 @router.message(F.text.in_(BOOK_APPOINTMENT_TEXTS))
 async def start_booking(message: Message, state: FSMContext, lang: str) -> None:
     async with async_session_factory() as session:
-        services = await ServiceRepository(session).list_active()
+        services = await ServiceRepository(session).list_client_services()
     if not services:
         await message.answer(t(lang, "no_services"))
         return
@@ -222,7 +235,7 @@ async def view_service(callback: CallbackQuery, state: FSMContext, lang: str, bo
     async with async_session_factory() as session:
         service = await ServiceRepository(session).get_by_id(service_id)
         if not is_service_bookable(service):
-            await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+            await safe_callback_answer(callback, t(lang, client_service_unavailable_key(service)), show_alert=True)
             return
         media_items = await ServiceMediaRepository(session).list_for_service(service_id)
         photos = await ServiceMediaRepository(session).count_photos(service_id)
@@ -265,7 +278,7 @@ async def view_service(callback: CallbackQuery, state: FSMContext, lang: str, bo
 @router.callback_query(BookingStates.choosing_service, F.data == "cb:svc_back")
 async def back_to_services(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
     async with async_session_factory() as session:
-        services = await ServiceRepository(session).list_active_services()
+        services = await ServiceRepository(session).list_client_services()
     if not services:
         await edit_or_send(callback, t(lang, "no_services"))
         await state.clear()
@@ -286,7 +299,10 @@ async def view_service_photos(callback: CallbackQuery, lang: str, bot: Bot) -> N
     service_id = _parse_service_id(callback.data)
     async with async_session_factory() as session:
         service = await ServiceRepository(session).get_by_id(service_id)
-        if not is_service_bookable(service) or not service.show_media_to_clients:
+        if not is_service_bookable(service):
+            await safe_callback_answer(callback, t(lang, client_service_unavailable_key(service)), show_alert=True)
+            return
+        if not service.show_media_to_clients:
             await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
             return
         media_items = await ServiceMediaRepository(session).list_for_service(service_id)
@@ -317,7 +333,10 @@ async def view_service_video(callback: CallbackQuery, lang: str, bot: Bot) -> No
     service_id = _parse_service_id(callback.data)
     async with async_session_factory() as session:
         service = await ServiceRepository(session).get_by_id(service_id)
-        if not is_service_bookable(service) or not service.show_media_to_clients:
+        if not is_service_bookable(service):
+            await safe_callback_answer(callback, t(lang, client_service_unavailable_key(service)), show_alert=True)
+            return
+        if not service.show_media_to_clients:
             await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
             return
         media_items = await ServiceMediaRepository(session).list_for_service(service_id)
@@ -363,7 +382,7 @@ async def choose_service(callback: CallbackQuery, state: FSMContext, lang: str) 
     async with async_session_factory() as session:
         service = await ServiceRepository(session).get_by_id(service_id)
         if not is_service_bookable(service):
-            await callback.message.answer(t(lang, "not_found"))
+            await callback.message.answer(t(lang, client_service_unavailable_key(service)))
             return
         locations = await ServiceLocationRepository(session).list_active_for_service(service_id)
 
@@ -371,6 +390,7 @@ async def choose_service(callback: CallbackQuery, state: FSMContext, lang: str) 
         service_id=service_id,
         service_name=service.name,
         requires_location=service.requires_location,
+        ask_client_comment=service.ask_client_comment,
         flow_origin="client",
     )
 
@@ -486,11 +506,10 @@ async def enter_phone(message: Message, state: FSMContext, lang: str) -> None:
         await state.set_state(BookingStates.entering_location)
         await message.answer(t(lang, "enter_location"), reply_markup=cancel_kb(lang))
         return
-    await state.set_state(BookingStates.confirming)
-    await message.answer(
-        _booking_summary(await state.get_data(), lang, show_location_comment=bool(data.get("requires_location"))),
-        reply_markup=confirm_kb(lang),
-    )
+    if data.get("ask_client_comment"):
+        await _prompt_comment(message, state, lang)
+        return
+    await _show_confirmation(message, state, lang)
 
 
 @router.message(BookingStates.entering_location, F.text)
@@ -500,43 +519,60 @@ async def enter_location(message: Message, state: FSMContext, lang: str) -> None
         await message.answer(t(lang, "enter_location"), reply_markup=cancel_kb(lang))
         return
     await state.update_data(location_text=location, flow_origin="client")
-    await state.set_state(BookingStates.entering_comment)
-    await message.answer(t(lang, "enter_comment"), reply_markup=skip_cancel_kb(lang))
+    data = await state.get_data()
+    if data.get("ask_client_comment"):
+        await _prompt_comment(message, state, lang)
+        return
+    await _show_confirmation(message, state, lang)
 
 
 @router.message(BookingStates.entering_comment, F.text.in_(SKIP_TEXTS))
 async def skip_comment(message: Message, state: FSMContext, lang: str) -> None:
     await state.update_data(client_comment=None, flow_origin="client")
-    await state.set_state(BookingStates.confirming)
-    await message.answer(
-        _booking_summary(await state.get_data(), lang, show_location_comment=True),
-        reply_markup=confirm_kb(lang),
-    )
+    await _show_confirmation(message, state, lang)
 
 
 @router.message(BookingStates.entering_comment, F.text)
 async def enter_comment(message: Message, state: FSMContext, lang: str) -> None:
     await state.update_data(client_comment=message.text.strip(), flow_origin="client")
-    await state.set_state(BookingStates.confirming)
-    await message.answer(
-        _booking_summary(await state.get_data(), lang, show_location_comment=True),
-        reply_markup=confirm_kb(lang),
-    )
+    await _show_confirmation(message, state, lang)
 
 
 @router.callback_query(BookingStates.confirming, F.data == "confirm:yes")
 async def confirm_booking(callback: CallbackQuery, state: FSMContext, is_admin: bool, lang: str) -> None:
     data = await state.get_data()
-    slot = slot_from_timestamp(data["slot_ts"])
+    if data.get("booking_confirm_in_progress"):
+        logger.info("Duplicate confirm tap ignored for user %s", callback.from_user.id)
+        await safe_callback_answer(callback, t(lang, "booking_request_in_progress"), show_alert=True)
+        return
+
+    await safe_callback_answer(callback)
+
+    service_id = data.get("service_id")
+    slot_ts = data.get("slot_ts")
+    client_name = data.get("client_name")
+    if not service_id or slot_ts is None or not client_name:
+        await state.clear()
+        await edit_or_send(callback, t(lang, "session_expired"))
+        await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        return
+
+    slot = slot_from_timestamp(slot_ts)
+    await state.update_data(booking_confirm_in_progress=True)
+    try:
+        await callback.message.edit_text(t(lang, "booking_creating"), reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
     try:
         async with async_session_factory() as session:
             booking_service = BookingService(session)
             auto_confirm = (await SettingsRepository(session).get("auto_confirm", "false")) == "true"
             booking = await booking_service.create_booking(
                 telegram_id=callback.from_user.id,
-                service_id=data["service_id"],
+                service_id=service_id,
                 start_at=slot,
-                client_name=data["client_name"],
+                client_name=client_name,
                 client_phone=data.get("client_phone"),
                 auto_confirm=auto_confirm,
                 location_text=data.get("location_text"),
@@ -546,18 +582,21 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, is_admin: 
                 service_location_address=data.get("service_location_address"),
             )
             service = await ServiceRepository(session).get_by_id(booking.service_id)
+    except SlotUnavailableError:
+        await edit_or_send(callback, t(lang, "slot_unavailable"))
+        await state.clear()
+        await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        return
     except ValueError:
         await edit_or_send(callback, t(lang, "slot_unavailable"))
         await state.clear()
         await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
-        await safe_callback_answer(callback)
         return
     except Exception:
         logger.exception("Booking confirmation failed for user %s", callback.from_user.id)
         await edit_or_send(callback, t(lang, "error_generic"))
         await state.clear()
         await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
-        await safe_callback_answer(callback)
         return
 
     if booking.status.value == "confirmed":
@@ -566,12 +605,11 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, is_admin: 
         msg = t(lang, "booking_created_pending")
     await edit_or_send(
         callback,
-        f"{msg}\n\n{format_booking(booking, service, lang, show_location_comment=bool(data.get('requires_location') or data.get('service_location_title')))}",
+        f"{msg}\n\n{format_booking(booking, service, lang, show_location_comment=True)}",
     )
     await _notify_admins_new_booking(callback.bot, booking, service, lang)
     await state.clear()
     await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
-    await safe_callback_answer(callback)
 
 
 @router.message(F.text.in_(MY_BOOKINGS_TEXTS))

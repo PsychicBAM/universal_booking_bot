@@ -1,6 +1,8 @@
 .env
 .env.local
 .env.*.local
+.cursor/
+.cursor/rules/
 data/*.db
 data/*.db*
 data/*.sqlite
@@ -17,4 +19,3 @@ venv/
 backups/
 _temp/
 *.bak
-USE_THIS_TEMPLATE.md

@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     reschedule_booking_hours_before: int | None = Field(None, alias="RESCHEDULE_BOOKING_HOURS_BEFORE")
     contact_admin_username: str = Field("", alias="CONTACT_ADMIN_USERNAME")
     default_language: str = Field("ru", alias="DEFAULT_LANGUAGE")
+    enabled_languages: str = Field("ru,en", alias="ENABLED_LANGUAGES")
     supported_languages: list[str] = Field(default_factory=lambda: ["ru", "en"], alias="SUPPORTED_LANGUAGES")
 
     google_calendar_enabled: bool = Field(False, alias="GOOGLE_CALENDAR_ENABLED")

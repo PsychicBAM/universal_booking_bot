@@ -20,13 +20,16 @@ from app.bot.settings_ui import (
     edit_to_advanced,
     edit_to_calendar,
     edit_to_contact,
+    edit_to_enabled_languages,
     edit_to_language,
     edit_to_reminders,
     edit_to_settings_main,
     edit_to_test_mode,
     send_settings_main,
 )
+from app.services.bot_settings_service import load_bot_settings_snapshot
 from app.services.calendar_service import CalendarService
+from app.services.language_service import effective_lang, save_enabled_languages
 from app.bot.states import AdminSettingsStates
 from app.config import get_settings
 from app.database.session import async_session_factory
@@ -62,7 +65,7 @@ async def open_settings(message: Message, state: FSMContext, is_admin: bool, lan
     await send_settings_main(message, lang, message.from_user.id)
 
 
-@router.callback_query(F.data.startswith("set:"))
+@router.callback_query(F.data.startswith("set:") & ~F.data.startswith("set:start:"))
 async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admin: bool, lang: str) -> None:
     if not is_admin:
         await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
@@ -201,6 +204,21 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
         await edit_to_test_mode(callback, lang)
         return
 
+    if data == "set:enabled:open":
+        await edit_to_enabled_languages(callback, lang)
+        await safe_callback_answer(callback)
+        return
+
+    if data in ("set:enabled:ru", "set:enabled:en", "set:enabled:both"):
+        mode = {"set:enabled:ru": "ru", "set:enabled:en": "en", "set:enabled:both": "ru,en"}[data]
+        async with async_session_factory() as session:
+            enabled = await save_enabled_languages(session, mode)
+            await session.commit()
+        forced_lang = effective_lang(lang, enabled, enabled[0])
+        await safe_callback_answer(callback, t(forced_lang, "enabled_languages_saved"))
+        await edit_to_enabled_languages(callback, forced_lang)
+        return
+
     if data == "set:lang:open":
         await edit_to_language(callback, lang)
         await safe_callback_answer(callback)
@@ -208,11 +226,11 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
 
     if data in ("set:lang:ru", "set:lang:en"):
         new_lang = parts[-1]
-        settings = get_settings()
-        if new_lang not in settings.supported_languages:
-            await safe_callback_answer(callback, "Unsupported", show_alert=True)
-            return
         async with async_session_factory() as session:
+            snapshot = await load_bot_settings_snapshot(session, callback.from_user.id)
+            if new_lang not in snapshot.enabled_languages:
+                await safe_callback_answer(callback, t(lang, "unsupported_language"), show_alert=True)
+                return
             await ClientRepository(session).set_language(callback.from_user.id, new_lang)
             await session.commit()
         await safe_callback_answer(callback)

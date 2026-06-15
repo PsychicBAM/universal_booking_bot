@@ -6,6 +6,11 @@ from aiogram.types import TelegramObject
 from app.config import get_settings
 from app.database.session import async_session_factory
 from app.repositories import ClientRepository
+from app.services.language_service import (
+    effective_lang,
+    get_effective_default_language,
+    refresh_enabled_languages_cache,
+)
 
 
 class AdminMiddleware(BaseMiddleware):
@@ -29,14 +34,18 @@ class LanguageMiddleware(BaseMiddleware):
         data: dict[str, Any],
     ) -> Any:
         user = data.get("event_from_user")
-        settings = get_settings()
-        lang = settings.default_language
-        if user:
-            async with async_session_factory() as session:
+        user_lang: str | None = None
+
+        async with async_session_factory() as session:
+            enabled = await refresh_enabled_languages_cache(session)
+            default_lang = await get_effective_default_language(session)
+            if user:
                 client = await ClientRepository(session).get_by_telegram_id(user.id)
                 if client and client.language:
-                    lang = client.language
-        if lang not in settings.supported_languages:
-            lang = settings.default_language
+                    user_lang = client.language
+
+        lang = effective_lang(user_lang, enabled, default_lang)
         data["lang"] = lang
+        data["enabled_languages"] = enabled
+        data["language_switching_enabled"] = len(enabled) > 1
         return await handler(event, data)

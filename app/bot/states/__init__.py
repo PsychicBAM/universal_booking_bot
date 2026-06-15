@@ -64,3 +64,19 @@ class AdminSettingsStates(StatesGroup):
     entering_value = State()
     entering_reminder_minutes = State()
     entering_contact = State()
+
+
+class AdminStartScreenStates(StatesGroup):
+    entering_ru_text = State()
+    entering_en_text = State()
+    uploading_photo_ru = State()
+    uploading_photo_en = State()
+
+
+class ClientSupportStates(StatesGroup):
+    choosing_booking = State()
+    entering_message = State()
+
+
+class AdminSupportStates(StatesGroup):
+    entering_reply = State()

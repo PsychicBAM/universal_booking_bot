@@ -272,6 +272,7 @@ async def _send_plain_video(bot: Bot, chat_id: int, video: ServiceMedia, service
 
 async def build_admin_service_detail(session: AsyncSession, service: Service, lang: str):
     from app.bot.keyboards import admin_service_detail_kb
+    from app.bot.utils.service_helpers import service_detail_source
 
     repo = ServiceMediaRepository(session)
     photos = await repo.count_photos(service.id)
@@ -290,5 +291,6 @@ async def build_admin_service_detail(session: AsyncSession, service: Service, la
         lang,
         archived=service.archived_at is not None,
         show_media_to_clients=service.show_media_to_clients,
+        detail_source=service_detail_source(service),
     )
     return text, kb

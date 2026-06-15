@@ -1,8 +1,11 @@
+import logging
+
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.utils.callbacks import safe_callback_answer
+from app.bot.utils.telegram_ui import edit_or_send
 
 from app.bot.i18n import format_buffer, format_duration, t
 from app.bot.keyboards import (
@@ -13,6 +16,7 @@ from app.bot.keyboards import (
     admin_archived_services_kb,
     admin_booking_detail_kb,
     admin_bookings_kb,
+    admin_disabled_services_kb,
     admin_menu,
     admin_service_delete_confirm_kb,
     archived_service_detail_kb,
@@ -27,7 +31,7 @@ from app.bot.states import (
 )
 from app.config import get_settings
 from app.database.session import async_session_factory
-from app.models import Client
+from app.models import BookingStatus, Client
 from app.repositories import (
     BookingRepository,
     ServiceRepository,
@@ -39,6 +43,7 @@ from app.services.service_media_service import build_admin_service_detail
 from app.utils.formatting import format_booking, parse_time
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 MIN_SERVICE_DURATION = 5
 MAX_SERVICE_DURATION = 1440
@@ -132,13 +137,55 @@ def _format_archived_service_detail(service, bookings_count: int, lang: str) -> 
     )
 
 
-async def _show_active_services(callback: CallbackQuery, lang: str) -> None:
+def _active_services_text(services, lang: str) -> str:
+    lines = [t(lang, "services_management"), "", t(lang, "services_active_title")]
+    if not services:
+        lines.append(t(lang, "services_no_active"))
+    return "\n".join(lines)
+
+
+def _disabled_services_text(services, lang: str) -> str:
+    lines = [t(lang, "services_disabled_title"), "", t(lang, "services_disabled_intro")]
+    if not services:
+        lines.append(t(lang, "services_no_disabled"))
+    return "\n".join(lines)
+
+
+async def _show_admin_services(callback: CallbackQuery, lang: str) -> None:
     async with async_session_factory() as session:
         services = await ServiceRepository(session).list_active_services()
     await callback.message.edit_text(
-        f"{t(lang, 'services_management')}\n\n{t(lang, 'services_active_title')}",
+        _active_services_text(services, lang),
         reply_markup=admin_active_services_kb(services, lang),
     )
+
+
+async def _show_disabled_services(callback: CallbackQuery, lang: str) -> None:
+    async with async_session_factory() as session:
+        services = await ServiceRepository(session).list_disabled_services()
+    await callback.message.edit_text(
+        _disabled_services_text(services, lang),
+        reply_markup=admin_disabled_services_kb(services, lang),
+    )
+
+
+async def _show_service_detail(callback: CallbackQuery, service_id: int, lang: str) -> bool:
+    async with async_session_factory() as session:
+        repo = ServiceRepository(session)
+        service = await repo.get_by_id(service_id)
+        if not service:
+            await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+            return False
+        if service.archived_at is not None:
+            bookings_count = await repo.count_bookings_for_service(service_id)
+            await callback.message.edit_text(
+                _format_archived_service_detail(service, bookings_count, lang),
+                reply_markup=archived_service_detail_kb(service_id, lang),
+            )
+            return True
+        text, kb = await build_admin_service_detail(session, service, lang)
+    await callback.message.edit_text(text, reply_markup=kb)
+    return True
 
 
 @router.message(F.text.in_(ADMIN_SERVICES_TEXTS))
@@ -148,7 +195,7 @@ async def admin_services(message: Message, is_admin: bool, lang: str) -> None:
     async with async_session_factory() as session:
         services = await ServiceRepository(session).list_active_services()
     await message.answer(
-        f"{t(lang, 'services_management')}\n\n{t(lang, 'services_active_title')}",
+        _active_services_text(services, lang),
         reply_markup=admin_active_services_kb(services, lang),
     )
 
@@ -157,8 +204,30 @@ async def admin_services(message: Message, is_admin: bool, lang: str) -> None:
 async def admin_services_list(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
-    await _show_active_services(callback, lang)
+    await _show_admin_services(callback, lang)
     await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data == "svc:disabled")
+async def admin_disabled_services_list(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    if not is_admin:
+        return
+    await _show_disabled_services(callback, lang)
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.regexp(r"^svc:disabled:view:\d+$"))
+async def admin_disabled_service_detail(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    if not is_admin:
+        return
+    service_id = int(callback.data.rsplit(":", 1)[1])
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+    if not service or service.archived_at is not None or service.is_active:
+        await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
+        return
+    if await _show_service_detail(callback, service_id, lang):
+        await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data == "svc:back")
@@ -217,7 +286,7 @@ async def admin_restore_service(callback: CallbackQuery, is_admin: bool, lang: s
         await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
         return
     await safe_callback_answer(callback, t(lang, "service_restored"))
-    await _show_active_services(callback, lang)
+    await _show_admin_services(callback, lang)
 
 
 @router.callback_query(F.data.regexp(r"^svc:arch:delete:\d+$"))
@@ -354,28 +423,13 @@ async def admin_service_price(message: Message, state: FSMContext, lang: str) ->
     await message.answer(t(lang, "service_created", name=service.name), reply_markup=admin_menu(lang))
 
 
-@router.callback_query(F.data.startswith("adm_svc:"))
+@router.callback_query(F.data.regexp(r"^adm_svc:\d+$"))
 async def admin_service_detail(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
-    if not is_admin or callback.data == "adm_svc:add":
+    if not is_admin:
         return
-    service_id = int(callback.data.split(":", 1)[1])
-    async with async_session_factory() as session:
-        repo = ServiceRepository(session)
-        service = await repo.get_by_id(service_id)
-        if not service:
-            await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
-            return
-        if service.archived_at is not None:
-            bookings_count = await repo.count_bookings_for_service(service_id)
-            await callback.message.edit_text(
-                _format_archived_service_detail(service, bookings_count, lang),
-                reply_markup=archived_service_detail_kb(service_id, lang),
-            )
-            await safe_callback_answer(callback)
-            return
-        text, kb = await build_admin_service_detail(session, service, lang)
-    await callback.message.edit_text(text, reply_markup=kb)
-    await safe_callback_answer(callback)
+    service_id = int(callback.data.split(":")[-1])
+    if await _show_service_detail(callback, service_id, lang):
+        await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("adm_svc_loc:"))
@@ -396,10 +450,9 @@ async def admin_service_toggle_location(callback: CallbackQuery, is_admin: bool,
     await callback.message.edit_text(text, reply_markup=kb)
 
 
-@router.callback_query(F.data.startswith("adm_svc_toggle:"))
-async def admin_service_toggle(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+@router.callback_query(F.data.startswith("adm_svc_comment:"))
+async def admin_service_toggle_comment(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
-        await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
         return
     service_id = int(callback.data.split(":", 1)[1])
     async with async_session_factory() as session:
@@ -407,9 +460,83 @@ async def admin_service_toggle(callback: CallbackQuery, is_admin: bool, lang: st
         if not service:
             await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
             return
+        service.ask_client_comment = not service.ask_client_comment
+        await session.commit()
+        text, kb = await build_admin_service_detail(session, service, lang)
+    msg = t(lang, "client_comment_enabled" if service.ask_client_comment else "client_comment_disabled")
+    await safe_callback_answer(callback, msg)
+    await callback.message.edit_text(text, reply_markup=kb)
+
+
+@router.callback_query(F.data.regexp(r"^svc:disable:\d+$"))
+async def admin_disable_service(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    if not is_admin:
+        return
+    service_id = int(callback.data.rsplit(":", 1)[1])
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+        if not service or service.archived_at is not None:
+            await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
+            return
+        service.is_active = False
+        await session.commit()
+    await safe_callback_answer(callback, t(lang, "service_disabled_success"))
+    await _show_admin_services(callback, lang)
+
+
+@router.callback_query(F.data.regexp(r"^svc:enable:\d+$"))
+async def admin_enable_service(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    if not is_admin:
+        return
+    service_id = int(callback.data.rsplit(":", 1)[1])
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+        if not service or service.archived_at is not None:
+            await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
+            return
+        service.is_active = True
+        await session.commit()
+    await safe_callback_answer(callback, t(lang, "service_enabled_success"))
+    await _show_disabled_services(callback, lang)
+
+
+@router.callback_query(F.data.regexp(r"^svc:move_arch:\d+$"))
+async def admin_move_service_to_archive(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    if not is_admin:
+        return
+    service_id = int(callback.data.rsplit(":", 1)[1])
+    async with async_session_factory() as session:
+        repo = ServiceRepository(session)
+        service = await repo.get_by_id(service_id)
+        if not service or service.archived_at is not None:
+            await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
+            return
+        await repo.archive_service(service)
+        await session.commit()
+    await safe_callback_answer(callback, t(lang, "service_archived"))
+    await _show_disabled_services(callback, lang)
+
+
+@router.callback_query(F.data.regexp(r"^adm_svc_toggle:\d+$"))
+async def admin_service_toggle(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    if not is_admin:
+        await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
+        return
+    service_id = int(callback.data.split(":")[-1])
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+        if not service:
+            await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
+            return
+        was_active = service.is_active
         service.is_active = not service.is_active
         await session.commit()
-    await admin_service_detail(callback, is_admin, lang)
+    msg = t(lang, "service_disabled_success" if was_active else "service_enabled_success")
+    await safe_callback_answer(callback, msg)
+    if was_active:
+        await _show_admin_services(callback, lang)
+    else:
+        await _show_disabled_services(callback, lang)
 
 
 @router.callback_query(F.data.regexp(r"^adm_svc_del:\d+$"))
@@ -522,19 +649,33 @@ async def admin_service_edit_value(message: Message, state: FSMContext, lang: st
 async def admin_bookings(message: Message, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
-    async with async_session_factory() as session:
-        bookings = await BookingRepository(session).list_upcoming()
-    await message.answer(t(lang, "upcoming_bookings"), reply_markup=admin_bookings_kb(bookings, lang))
+    await show_admin_bookings(message, lang)
 
 
 @router.callback_query(F.data == "adm_bookings:list")
 async def admin_bookings_list(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
+    await safe_callback_answer(callback)
+    await show_admin_bookings(callback, lang)
+
+
+async def show_admin_bookings(
+    event: CallbackQuery | Message,
+    lang: str,
+    *,
+    prefix: str | None = None,
+) -> None:
     async with async_session_factory() as session:
         bookings = await BookingRepository(session).list_upcoming()
-    await callback.message.edit_text(t(lang, "upcoming_bookings"), reply_markup=admin_bookings_kb(bookings, lang))
-    await safe_callback_answer(callback)
+    text = t(lang, "upcoming_bookings")
+    if prefix:
+        text = f"{prefix}\n\n{text}"
+    keyboard = admin_bookings_kb(bookings, lang)
+    if isinstance(event, CallbackQuery):
+        await edit_or_send(event, text, reply_markup=keyboard)
+    else:
+        await event.answer(text, reply_markup=keyboard)
 
 
 @router.callback_query(F.data.startswith("adm_booking:"))
@@ -577,7 +718,7 @@ async def admin_confirm_booking(callback: CallbackQuery, is_admin: bool, lang: s
         try:
             await callback.bot.send_message(
                 client.telegram_id,
-                f"{t(client_lang, 'booking_confirmed_client')}\n{format_booking(booking, service, client_lang)}",
+                f"{t(client_lang, 'booking_confirmed_client')}\n{format_booking(booking, service, client_lang, show_location_comment=True)}",
             )
         except Exception:
             pass
@@ -589,15 +730,38 @@ async def admin_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: st
     if not is_admin:
         await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
         return
-    booking_id = int(callback.data.split(":", 1)[1])
-    try:
-        async with async_session_factory() as session:
-            await BookingService(session).cancel_booking(booking_id)
-    except ValueError:
-        await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
-        return
-    await callback.message.edit_text(t(lang, "booking_cancelled_admin", id=str(booking_id)))
+
     await safe_callback_answer(callback)
+    booking_id = int(callback.data.split(":", 1)[1])
+
+    async with async_session_factory() as session:
+        booking = await BookingRepository(session).get_by_id(booking_id)
+        if not booking or booking.status == BookingStatus.CANCELLED:
+            await show_admin_bookings(
+                callback,
+                lang,
+                prefix=t(lang, "booking_already_cancelled_or_missing"),
+            )
+            return
+        try:
+            await BookingService(session).cancel_booking(booking_id)
+        except ValueError:
+            await show_admin_bookings(
+                callback,
+                lang,
+                prefix=t(lang, "booking_already_cancelled_or_missing"),
+            )
+            return
+        except Exception:
+            logger.exception("Admin cancel failed for booking_id=%s", booking_id)
+            await edit_or_send(callback, t(lang, "error_generic"))
+            return
+
+    await show_admin_bookings(
+        callback,
+        lang,
+        prefix=t(lang, "booking_cancelled_admin", id=str(booking_id)),
+    )
 
 
 @router.callback_query(F.data.startswith("adm_msg:"))

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models import Booking, BookingStatus
+from app.models import Booking, BookingStatus, Service
 from app.repositories import (
     BookingRepository,
     ClientRepository,
@@ -15,7 +15,9 @@ from app.repositories import (
     WorkingHoursRepository,
 )
 from app.services.availability_service import AvailabilityService
+from app.services.booking_lock import booking_lock_manager
 from app.services.calendar_service import CalendarService
+from app.services.exceptions import SlotUnavailableError
 from app.bot.i18n import t
 from app.utils.datetime_utils import normalize_slot, now_local, to_local_naive
 from app.utils.formatting import format_datetime
@@ -39,6 +41,76 @@ class BookingService:
             calendar_service=self.calendar_service,
         )
 
+    async def _assert_slot_available_for_write(
+        self,
+        service_id: int,
+        start_at: datetime,
+        *,
+        exclude_booking_id: int | None = None,
+    ) -> tuple[Service, datetime, datetime]:
+        """Final local DB availability check (no Google API). Raises SlotUnavailableError."""
+        start_at = normalize_slot(start_at)
+        service = await self.service_repo.get_by_id(service_id)
+        if not service or not service.is_active or service.archived_at is not None:
+            logger.warning("Slot check rejected: service_id=%s not available", service_id)
+            raise SlotUnavailableError("service_not_available")
+
+        end_at = start_at + timedelta(minutes=service.duration_minutes)
+        buffer_map = await self.service_repo.buffer_minutes_by_id()
+        buffer_m = int(service.buffer_after_minutes or 0)
+
+        conflict = await self.booking_repo.find_overlapping_active_booking(
+            start_at,
+            end_at,
+            buffer_m,
+            buffer_map,
+            exclude_booking_id=exclude_booking_id,
+        )
+        if conflict is not None:
+            logger.warning(
+                "Slot unavailable due to overlap: service_id=%s start_at=%s conflict_booking_id=%s",
+                service_id,
+                start_at.isoformat(),
+                conflict.id,
+            )
+            raise SlotUnavailableError("overlap", conflict_booking_id=conflict.id)
+
+        duplicate = await self.booking_repo.find_exact_active_duplicate(
+            service_id, start_at, exclude_booking_id=exclude_booking_id
+        )
+        if duplicate is not None:
+            logger.warning(
+                "Slot unavailable due to exact duplicate: service_id=%s start_at=%s booking_id=%s",
+                service_id,
+                start_at.isoformat(),
+                duplicate.id,
+            )
+            raise SlotUnavailableError("exact_duplicate", conflict_booking_id=duplicate.id)
+
+        available, reason = await self.availability_service.is_slot_available(
+            service_id,
+            start_at,
+            self.service_repo,
+            exclude_booking_id=exclude_booking_id,
+            include_google=False,
+        )
+        logger.info(
+            "Final availability check: service_id=%s start_at=%s available=%s reason=%s exclude=%s",
+            service_id,
+            start_at.isoformat(),
+            available,
+            reason,
+            exclude_booking_id,
+        )
+        if not available:
+            raise SlotUnavailableError(reason)
+
+        return service, start_at, end_at
+
+    async def _rollback_session(self) -> None:
+        if self.session.in_transaction():
+            await self.session.rollback()
+
     async def create_booking(
         self,
         telegram_id: int,
@@ -54,51 +126,55 @@ class BookingService:
         service_location_address: str | None = None,
     ) -> Booking:
         start_at = normalize_slot(start_at)
-        service = await self.service_repo.get_by_id(service_id)
-        if not service or not service.is_active or service.archived_at is not None:
-            logger.warning("Booking rejected: service_id=%s not available", service_id)
-            raise ValueError("Service not available")
-
-        available, reason = await self.availability_service.is_slot_available(
-            service_id, start_at, self.service_repo
-        )
         logger.info(
-            "Booking availability check: service_id=%s date=%s time=%s datetime=%s "
-            "duration=%s available=%s reason=%s google_cal=%s",
+            "Booking create requested: telegram_id=%s service_id=%s start_at=%s",
+            telegram_id,
             service_id,
-            start_at.date(),
-            start_at.time(),
             start_at.isoformat(),
-            service.duration_minutes,
-            available,
-            reason,
-            await self.calendar_service.is_enabled(),
         )
-        if not available:
-            raise ValueError("Time slot is no longer available")
 
-        end_at = start_at + timedelta(minutes=service.duration_minutes)
-        client = await self.client_repo.update_contact(telegram_id, client_name, client_phone or "")
-        status = BookingStatus.CONFIRMED if auto_confirm else BookingStatus.PENDING
-        booking = await self.booking_repo.create(
-            client_id=client.id,
-            service_id=service.id,
-            start_at=start_at,
-            end_at=end_at,
-            client_name=client_name,
-            client_phone=client_phone,
-            status=status,
-            location_text=location_text,
-            client_comment=client_comment,
-            service_location_id=service_location_id,
-            service_location_title=service_location_title,
-            service_location_address=service_location_address,
-        )
-        await self.session.commit()
-        await self.session.refresh(booking)
-        logger.info("Booking created: id=%s service_id=%s start_at=%s", booking.id, service_id, start_at)
+        async with booking_lock_manager.hold(start_at.date()):
+            try:
+                service, start_at, end_at = await self._assert_slot_available_for_write(
+                    service_id, start_at
+                )
+                if service.requires_location and not (location_text and location_text.strip()):
+                    raise ValueError("Location required")
+                client = await self.client_repo.update_contact(
+                    telegram_id, client_name, client_phone or ""
+                )
+                status = BookingStatus.CONFIRMED if auto_confirm else BookingStatus.PENDING
+                booking = await self.booking_repo.create(
+                    client_id=client.id,
+                    service_id=service.id,
+                    start_at=start_at,
+                    end_at=end_at,
+                    client_name=client_name,
+                    client_phone=client_phone,
+                    status=status,
+                    location_text=location_text,
+                    client_comment=client_comment,
+                    service_location_id=service_location_id,
+                    service_location_title=service_location_title,
+                    service_location_address=service_location_address,
+                )
+                await self.session.commit()
+                await self.session.refresh(booking)
+                logger.info(
+                    "Booking created: id=%s service_id=%s start_at=%s status=%s",
+                    booking.id,
+                    service_id,
+                    start_at.isoformat(),
+                    status.value,
+                )
+            except SlotUnavailableError:
+                await self._rollback_session()
+                raise
+            except Exception:
+                await self._rollback_session()
+                raise
 
-        if status == BookingStatus.CONFIRMED:
+        if booking.status == BookingStatus.CONFIRMED:
             await self._sync_calendar(booking)
         return booking
 
@@ -128,7 +204,13 @@ class BookingService:
                 raise ValueError("Too late to cancel")
 
         if booking.google_event_id:
-            await self.calendar_service.delete_event(booking.google_event_id)
+            try:
+                await self.calendar_service.delete_event(booking.google_event_id)
+            except Exception:
+                logger.exception(
+                    "Failed to delete Google Calendar event for booking_id=%s (booking still cancelled)",
+                    booking.id,
+                )
 
         booking.status = BookingStatus.CANCELLED
         await self.session.commit()
@@ -230,8 +312,11 @@ class BookingService:
             if event_id:
                 booking.google_event_id = event_id
                 await self.session.commit()
+                logger.info("Google Calendar sync success: booking_id=%s event_id=%s", booking.id, event_id)
+            else:
+                logger.warning("Google Calendar sync returned no event_id for booking_id=%s", booking.id)
         except Exception:
-            logger.exception("Failed to sync booking %s to Google Calendar", booking.id)
+            logger.exception("Google Calendar sync failed for booking_id=%s (local booking kept)", booking.id)
 
     async def _update_calendar(self, booking: Booking) -> None:
         if not await self.calendar_service.is_enabled():
@@ -266,42 +351,48 @@ class BookingService:
             raise ValueError("Too late to reschedule")
 
         new_start_at = normalize_slot(new_start_at)
-        service = await self.service_repo.get_by_id(booking.service_id)
-        if not service or not service.is_active or service.archived_at is not None:
-            raise ValueError("Service not available")
-
-        available, reason = await self.availability_service.is_slot_available(
-            booking.service_id,
-            new_start_at,
-            self.service_repo,
-            exclude_booking_id=booking.id,
-        )
         logger.info(
-            "Reschedule availability: booking_id=%s new_start=%s available=%s reason=%s",
+            "Reschedule requested: booking_id=%s telegram_id=%s new_start_at=%s",
             booking_id,
+            telegram_id,
             new_start_at.isoformat(),
-            available,
-            reason,
         )
-        if not available:
-            raise ValueError("Time slot is no longer available")
 
-        old_start = booking.start_at
-        booking.start_at = new_start_at
-        booking.end_at = new_start_at + timedelta(minutes=service.duration_minutes)
-        self._reset_reminders(booking)
-        await self.session.commit()
-        await self.session.refresh(booking)
+        async with booking_lock_manager.hold(new_start_at.date()):
+            try:
+                booking = await self._get_editable_client_booking(booking_id, telegram_id)
+                if not self._can_reschedule_by_time(booking):
+                    raise ValueError("Too late to reschedule")
+
+                service, new_start_at, new_end_at = await self._assert_slot_available_for_write(
+                    booking.service_id,
+                    new_start_at,
+                    exclude_booking_id=booking.id,
+                )
+
+                old_start = booking.start_at
+                booking.start_at = new_start_at
+                booking.end_at = new_end_at
+                self._reset_reminders(booking)
+                await self.session.flush()
+                await self.session.commit()
+                await self.session.refresh(booking)
+                logger.info(
+                    "Booking rescheduled: id=%s from=%s to=%s",
+                    booking.id,
+                    old_start,
+                    new_start_at,
+                )
+            except SlotUnavailableError:
+                await self._rollback_session()
+                raise
+            except Exception:
+                await self._rollback_session()
+                raise
 
         if booking.status == BookingStatus.CONFIRMED:
             await self._update_calendar(booking)
 
-        logger.info(
-            "Booking rescheduled: id=%s from=%s to=%s",
-            booking.id,
-            old_start,
-            new_start_at,
-        )
         return booking
 
     async def change_service_location(
@@ -356,7 +447,7 @@ class BookingService:
     ) -> Booking:
         booking = await self._get_editable_client_booking(booking_id, telegram_id)
         service = await self.service_repo.get_by_id(booking.service_id)
-        if not service or not service.requires_location:
+        if not service or not service.ask_client_comment:
             raise ValueError("Comment change not allowed")
 
         booking.client_comment = comment.strip() if comment and comment.strip() else None

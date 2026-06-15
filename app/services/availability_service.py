@@ -237,6 +237,7 @@ class AvailabilityService:
         service_repo: ServiceRepository,
         *,
         exclude_booking_id: int | None = None,
+        include_google: bool = True,
     ) -> list[tuple[datetime, datetime]]:
         ranges: list[tuple[datetime, datetime]] = []
 
@@ -261,7 +262,7 @@ class AvailabilityService:
                 )
             )
 
-        if await self.calendar_service.is_enabled():
+        if include_google and await self.calendar_service.is_enabled():
             busy = await self.calendar_service.get_busy_ranges(
                 day_start,
                 day_end,
@@ -289,6 +290,7 @@ class AvailabilityService:
         service_repo: ServiceRepository,
         *,
         exclude_booking_id: int | None = None,
+        include_google: bool = True,
     ) -> tuple[bool, str]:
         service = await service_repo.get_by_id(service_id)
         if not service or not service.is_active:
@@ -317,7 +319,12 @@ class AvailabilityService:
             return False, "slot_in_past"
 
         blocked_ranges = await self._collect_blocked_ranges(
-            target_date, day_start, day_end, service_repo, exclude_booking_id=exclude_booking_id
+            target_date,
+            day_start,
+            day_end,
+            service_repo,
+            exclude_booking_id=exclude_booking_id,
+            include_google=include_google,
         )
         if self._overlaps_any(slot_start, slot_end + buffer, blocked_ranges):
             return False, "overlaps_blocked_range_or_existing_booking"

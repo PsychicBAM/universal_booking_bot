@@ -14,6 +14,12 @@ class BookingStatus(str, enum.Enum):
     COMPLETED = "completed"
 
 
+class SupportMessageStatus(str, enum.Enum):
+    OPEN = "open"
+    REPLIED = "replied"
+    CLOSED = "closed"
+
+
 class Admin(Base):
     __tablename__ = "admins"
 
@@ -45,6 +51,7 @@ class Service(Base):
     duration_minutes: Mapped[int] = mapped_column(Integer, default=60)
     buffer_after_minutes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     requires_location: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ask_client_comment: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     show_media_to_clients: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     price: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -179,3 +186,23 @@ class BotSettings(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     value: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SupportMessage(Base):
+    __tablename__ = "support_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    client_telegram_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    client_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    client_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    topic: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    booking_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    admin_reply_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    replied_by_admin_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[SupportMessageStatus] = mapped_column(
+        Enum(SupportMessageStatus), default=SupportMessageStatus.OPEN, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

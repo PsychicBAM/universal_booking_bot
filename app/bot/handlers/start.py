@@ -14,9 +14,10 @@ from app.bot.keyboards import (
     language_kb,
     main_menu,
 )
-from app.config import get_settings
 from app.database.session import async_session_factory
 from app.repositories import ClientRepository
+from app.services.language_service import effective_lang, parse_enabled_languages_value
+from app.services.start_screen_service import deliver_start_screen
 
 router = Router()
 
@@ -24,13 +25,7 @@ router = Router()
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, is_admin: bool, lang: str) -> None:
     await state.clear()
-    settings = get_settings()
-    contact = settings.contact_admin_username
-    contact_line = t(lang, "support_line", username=contact.lstrip("@")) if contact else ""
-    await message.answer(
-        f"{t(lang, 'welcome')}\n\n{t(lang, 'welcome_sub')}{contact_line}",
-        reply_markup=main_menu(is_admin, lang),
-    )
+    await deliver_start_screen(message, is_admin=is_admin, lang=lang)
 
 
 @router.message(Command("admin"))
@@ -56,20 +51,38 @@ async def back_main(message: Message, is_admin: bool, lang: str) -> None:
 
 
 @router.message(F.text.in_(LANGUAGE_TEXTS))
-async def choose_language(message: Message, lang: str) -> None:
-    await message.answer(t(lang, "language_choose"), reply_markup=language_kb())
+async def choose_language(
+    message: Message,
+    is_admin: bool,
+    lang: str,
+    language_switching_enabled: bool,
+    enabled_languages: list[str],
+) -> None:
+    if not language_switching_enabled:
+        forced = effective_lang(lang, enabled_languages, lang)
+        await message.answer(t(forced, "language_switching_disabled"), reply_markup=main_menu(is_admin, forced))
+        return
+    await message.answer(t(lang, "language_choose"), reply_markup=language_kb(enabled_languages))
 
 
 @router.callback_query(F.data.startswith("lang:"))
-async def set_language(callback: CallbackQuery, is_admin: bool) -> None:
-    lang = callback.data.split(":")[1]
-    settings = get_settings()
-    if lang not in settings.supported_languages:
-        await safe_callback_answer(callback, t(lang, "unsupported_language"), show_alert=True)
+async def set_language(
+    callback: CallbackQuery,
+    is_admin: bool,
+    lang: str,
+    language_switching_enabled: bool,
+    enabled_languages: list[str],
+) -> None:
+    new_lang = callback.data.split(":")[1]
+    codes = parse_enabled_languages_value(",".join(enabled_languages))
+    if not language_switching_enabled or new_lang not in codes:
+        forced = effective_lang(lang, codes, lang)
+        await safe_callback_answer(callback, t(forced, "language_switching_disabled"), show_alert=True)
+        await callback.message.answer(t(forced, "main_menu"), reply_markup=main_menu(is_admin, forced))
         return
     async with async_session_factory() as session:
-        await ClientRepository(session).set_language(callback.from_user.id, lang)
+        await ClientRepository(session).set_language(callback.from_user.id, new_lang)
         await session.commit()
-    await callback.message.edit_text(t(lang, "language_set"))
-    await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+    await callback.message.edit_text(t(new_lang, "language_set"))
+    await callback.message.answer(t(new_lang, "main_menu"), reply_markup=main_menu(is_admin, new_lang))
     await safe_callback_answer(callback)

@@ -4,6 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.repositories import ClientRepository, SettingsRepository
+from app.services.language_service import (
+    effective_lang,
+    get_effective_default_language,
+    load_enabled_languages,
+)
 from app.services.reminder_settings import ReminderConfig, load_reminder_config
 
 
@@ -19,6 +24,7 @@ class BotSettingsSnapshot:
     reminders: ReminderConfig
     contact_admin_username: str | None
     admin_language: str
+    enabled_languages: list[str]
 
 
 async def load_bot_settings_snapshot(session: AsyncSession, telegram_id: int) -> BotSettingsSnapshot:
@@ -32,11 +38,15 @@ async def load_bot_settings_snapshot(session: AsyncSession, telegram_id: int) ->
         contact = settings.contact_admin_username
 
     client = await ClientRepository(session).get_by_telegram_id(telegram_id)
-    admin_language = client.language if client and client.language else settings.default_language
+    enabled_languages = await load_enabled_languages(session)
+    default_lang = await get_effective_default_language(session)
+    user_lang = client.language if client and client.language else default_lang
+    admin_language = effective_lang(user_lang, enabled_languages, default_lang)
 
     return BotSettingsSnapshot(
         auto_confirm=auto_confirm,
         reminders=reminders,
         contact_admin_username=contact or None,
         admin_language=admin_language,
+        enabled_languages=enabled_languages,
     )

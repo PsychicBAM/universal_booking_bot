@@ -4,6 +4,7 @@ from app.bot.i18n import LANG_EN, LANG_RU, all_texts, status_label, t, weekday_n
 from app.bot.keyboards.service_media_kb import admin_service_detail_media_rows
 from app.bot.keyboards.service_location_kb import admin_service_detail_location_row
 from app.models import Booking, Service
+from app.services.language_service import get_enabled_languages_sync, is_language_switching_enabled, parse_enabled_languages_value
 from app.utils.datetime_utils import slot_to_callback
 from app.utils.formatting import format_date, format_time
 
@@ -13,14 +14,18 @@ def main_menu(is_admin: bool = False, lang: str = "ru") -> ReplyKeyboardMarkup:
         [KeyboardButton(text=t(lang, "book_appointment"))],
         [KeyboardButton(text=t(lang, "my_bookings"))],
         [KeyboardButton(text=t(lang, "contact_admin"))],
-        [KeyboardButton(text=t(lang, "language"))],
     ]
+    if is_language_switching_enabled():
+        rows.append([KeyboardButton(text=t(lang, "language"))])
     if is_admin:
         rows.append([KeyboardButton(text=t(lang, "admin_menu"))])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 def admin_menu(lang: str = "ru") -> ReplyKeyboardMarkup:
+    bottom_row = [KeyboardButton(text=t(lang, "back_main"))]
+    if is_language_switching_enabled():
+        bottom_row.insert(0, KeyboardButton(text=t(lang, "language")))
     return ReplyKeyboardMarkup(
         keyboard=[
             [
@@ -35,7 +40,7 @@ def admin_menu(lang: str = "ru") -> ReplyKeyboardMarkup:
                 KeyboardButton(text=t(lang, "admin_calendar")),
                 KeyboardButton(text=t(lang, "admin_settings")),
             ],
-            [KeyboardButton(text=t(lang, "language")), KeyboardButton(text=t(lang, "back_main"))],
+            bottom_row,
         ],
         resize_keyboard=True,
     )
@@ -58,13 +63,14 @@ def skip_cancel_kb(lang: str = "ru") -> ReplyKeyboardMarkup:
     )
 
 
-def language_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=LANG_RU, callback_data="lang:ru")],
-            [InlineKeyboardButton(text=LANG_EN, callback_data="lang:en")],
-        ]
-    )
+def language_kb(enabled: list[str] | None = None) -> InlineKeyboardMarkup:
+    codes = parse_enabled_languages_value(",".join(enabled or get_enabled_languages_sync()))
+    rows: list[list[InlineKeyboardButton]] = []
+    if "ru" in codes:
+        rows.append([InlineKeyboardButton(text=LANG_RU, callback_data="lang:ru")])
+    if "en" in codes:
+        rows.append([InlineKeyboardButton(text=LANG_EN, callback_data="lang:en")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def services_kb(services: list[Service], lang: str = "ru") -> InlineKeyboardMarkup:
@@ -127,12 +133,29 @@ def booking_actions_kb(booking_id: int, can_cancel: bool = True, lang: str = "ru
 def admin_active_services_kb(services: list[Service], lang: str = "ru") -> InlineKeyboardMarkup:
     buttons = [[InlineKeyboardButton(text=t(lang, "add_service"), callback_data="adm_svc:add")]]
     for s in services:
-        status = "✅" if s.is_active else "❌"
         buttons.append(
-            [InlineKeyboardButton(text=f"{status} {s.name}", callback_data=f"adm_svc:{s.id}")]
+            [InlineKeyboardButton(text=f"✅ {s.name}", callback_data=f"adm_svc:{s.id}")]
         )
+    buttons.append(
+        [InlineKeyboardButton(text=t(lang, "services_disabled_button"), callback_data="svc:disabled")]
+    )
     buttons.append([InlineKeyboardButton(text=t(lang, "archived_services"), callback_data="svc:archive")])
     buttons.append([InlineKeyboardButton(text=t(lang, "back_to_admin_panel"), callback_data="svc:back")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_disabled_services_kb(services: list[Service], lang: str = "ru") -> InlineKeyboardMarkup:
+    buttons = []
+    for s in services:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f"🔴 {s.name}",
+                    callback_data=f"svc:disabled:view:{s.id}",
+                )
+            ]
+        )
+    buttons.append([InlineKeyboardButton(text=t(lang, "back_to_services"), callback_data="svc:list")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -188,6 +211,7 @@ def admin_service_detail_kb(
     *,
     archived: bool = False,
     show_media_to_clients: bool = True,
+    detail_source: str = "active",
 ) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=t(lang, "edit_name"), callback_data=f"adm_svc_edit:name:{service_id}")],
@@ -195,15 +219,38 @@ def admin_service_detail_kb(
         [InlineKeyboardButton(text=t(lang, "edit_duration"), callback_data=f"adm_svc_edit:dur:{service_id}")],
         [InlineKeyboardButton(text=t(lang, "edit_buffer"), callback_data=f"adm_svc_edit:buf:{service_id}")],
         [InlineKeyboardButton(text=t(lang, "toggle_location_request"), callback_data=f"adm_svc_loc:{service_id}")],
+        [InlineKeyboardButton(text=t(lang, "client_comment_toggle"), callback_data=f"adm_svc_comment:{service_id}")],
         admin_service_detail_location_row(service_id, lang),
         [InlineKeyboardButton(text=t(lang, "edit_price"), callback_data=f"adm_svc_edit:price:{service_id}")],
     ]
     rows.extend(admin_service_detail_media_rows(service_id, show_media_to_clients, lang))
     if not archived:
-        toggle = t(lang, "disable_service") if is_active else t(lang, "enable_service")
-        rows.append([InlineKeyboardButton(text=toggle, callback_data=f"adm_svc_toggle:{service_id}")])
-        rows.append([InlineKeyboardButton(text=t(lang, "delete_service"), callback_data=f"adm_svc_del:{service_id}")])
-    rows.append([InlineKeyboardButton(text=t(lang, "back"), callback_data="svc:list")])
+        if is_active:
+            rows.append(
+                [InlineKeyboardButton(text=t(lang, "disable_service"), callback_data=f"svc:disable:{service_id}")]
+            )
+        else:
+            rows.append(
+                [InlineKeyboardButton(text=t(lang, "enable_service"), callback_data=f"svc:enable:{service_id}")]
+            )
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=t(lang, "move_to_archive"),
+                        callback_data=f"svc:move_arch:{service_id}",
+                    )
+                ]
+            )
+        rows.append(
+            [InlineKeyboardButton(text=t(lang, "delete_service"), callback_data=f"adm_svc_del:{service_id}")]
+        )
+    if detail_source == "disabled":
+        back_label = t(lang, "back_to_disabled_services")
+        back_data = "svc:disabled"
+    else:
+        back_label = t(lang, "back_to_services")
+        back_data = "svc:list"
+    rows.append([InlineKeyboardButton(text=back_label, callback_data=back_data)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

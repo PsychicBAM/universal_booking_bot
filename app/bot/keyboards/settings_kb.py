@@ -15,15 +15,45 @@ def settings_main_kb(snapshot: BotSettingsSnapshot, lang: str) -> InlineKeyboard
         "settings_auto_confirm_btn_on",
         "settings_auto_confirm_btn_off",
     )
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=ac_btn, callback_data="set:ac:toggle")],
-            [InlineKeyboardButton(text=t(lang, "settings_reminders_btn"), callback_data="set:rm:open")],
-            [InlineKeyboardButton(text=t(lang, "settings_language_btn"), callback_data="set:lang:open")],
+    rows = [
+        [InlineKeyboardButton(text=ac_btn, callback_data="set:ac:toggle")],
+        [InlineKeyboardButton(text=t(lang, "settings_reminders_btn"), callback_data="set:rm:open")],
+        [InlineKeyboardButton(text=t(lang, "settings_enabled_languages_btn"), callback_data="set:enabled:open")],
+    ]
+    if len(snapshot.enabled_languages) > 1:
+        rows.append([InlineKeyboardButton(text=t(lang, "settings_language_btn"), callback_data="set:lang:open")])
+    rows.extend(
+        [
             [InlineKeyboardButton(text=t(lang, "settings_contact_btn"), callback_data="set:contact:open")],
+            [InlineKeyboardButton(text=t(lang, "start_screen_btn"), callback_data="set:start:open")],
             [InlineKeyboardButton(text=t(lang, "settings_calendar_btn"), callback_data="set:cal:open")],
             [InlineKeyboardButton(text=t(lang, "settings_advanced_btn"), callback_data="set:adv:open")],
             [InlineKeyboardButton(text=t(lang, "settings_back_admin_btn"), callback_data="set:back:admin")],
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def settings_language_kb(lang: str, enabled_languages: list[str] | None = None) -> InlineKeyboardMarkup:
+    from app.services.language_service import parse_enabled_languages_value
+
+    codes = parse_enabled_languages_value(",".join(enabled_languages or ["ru", "en"]))
+    rows: list[list[InlineKeyboardButton]] = []
+    if "ru" in codes:
+        rows.append([InlineKeyboardButton(text=LANG_RU, callback_data="set:lang:ru")])
+    if "en" in codes:
+        rows.append([InlineKeyboardButton(text=LANG_EN, callback_data="set:lang:en")])
+    rows.append([InlineKeyboardButton(text=t(lang, "settings_back_settings_btn"), callback_data="set:back:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def settings_enabled_languages_kb(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(lang, "enabled_languages_btn_ru"), callback_data="set:enabled:ru")],
+            [InlineKeyboardButton(text=t(lang, "enabled_languages_btn_en"), callback_data="set:enabled:en")],
+            [InlineKeyboardButton(text=t(lang, "enabled_languages_btn_both"), callback_data="set:enabled:both")],
+            [InlineKeyboardButton(text=t(lang, "settings_back_settings_btn"), callback_data="set:back:main")],
         ]
     )
 
@@ -112,16 +142,6 @@ def test_admin_presets_kb(lang: str) -> InlineKeyboardMarkup:
     rows = _time_preset_row(lang, "set:rm:test:ad", [10, 5, 3, 1])
     rows.append([InlineKeyboardButton(text=t(lang, "settings_back_test_btn"), callback_data="set:rm:test:open")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def settings_language_kb(lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=LANG_RU, callback_data="set:lang:ru")],
-            [InlineKeyboardButton(text=LANG_EN, callback_data="set:lang:en")],
-            [InlineKeyboardButton(text=t(lang, "settings_back_settings_btn"), callback_data="set:back:main")],
-        ]
-    )
 
 
 def settings_contact_kb(lang: str) -> InlineKeyboardMarkup:

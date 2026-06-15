@@ -30,6 +30,7 @@ from app.repositories import (
 )
 from app.services.availability_service import AvailabilityService
 from app.services.booking_service import BookingService
+from app.services.exceptions import SlotUnavailableError
 from app.services.calendar_service import CalendarService
 from app.services.language_service import get_user_language
 from app.utils.datetime_utils import now_local, slot_from_timestamp, to_local_naive
@@ -96,12 +97,13 @@ def _detail_options(
         > timedelta(hours=settings.effective_reschedule_hours_before())
     )
     requires_location = bool(service and service.requires_location)
+    asks_comment = bool(service and service.ask_client_comment)
     return {
         "can_reschedule": can_reschedule,
         "can_cancel": can_act,
         "can_change_location": editable and active_locations_count > 0,
         "can_change_address": editable and requires_location,
-        "can_change_comment": editable and requires_location,
+        "can_change_comment": editable and asks_comment,
     }
 
 
@@ -301,10 +303,22 @@ async def reschedule_choose_time(callback: CallbackQuery, lang: str, state: FSMC
 async def reschedule_confirm(callback: CallbackQuery, bot: Bot, lang: str, state: FSMContext) -> None:
     booking_id = int(callback.data.split(":")[-1])
     data = await state.get_data()
+    if data.get("reschedule_confirm_in_progress"):
+        logger.info("Duplicate reschedule confirm ignored booking_id=%s user=%s", booking_id, callback.from_user.id)
+        await safe_callback_answer(callback, t(lang, "booking_request_in_progress"), show_alert=True)
+        return
+
     if data.get("edit_booking_id") != booking_id or not data.get("reschedule_new_ts"):
         await safe_callback_answer(callback, t(lang, "session_expired"), show_alert=True)
         await state.clear()
         return
+
+    await safe_callback_answer(callback)
+    await state.update_data(reschedule_confirm_in_progress=True)
+    try:
+        await callback.message.edit_text(t(lang, "booking_creating"), reply_markup=None)
+    except Exception:
+        pass
 
     old_ts = data.get("reschedule_old_ts")
     old_dt = format_datetime(slot_from_timestamp(old_ts)) if old_ts else "—"
@@ -318,21 +332,25 @@ async def reschedule_confirm(callback: CallbackQuery, bot: Bot, lang: str, state
                 booking_id, callback.from_user.id, new_slot
             )
             service = await ServiceRepository(session).get_by_id(booking.service_id)
+    except SlotUnavailableError:
+        await state.update_data(reschedule_confirm_in_progress=False)
+        await edit_or_send(callback, t(lang, "slot_unavailable"))
+        return
     except ValueError as exc:
         err = str(exc)
+        await state.update_data(reschedule_confirm_in_progress=False)
         if "Too late" in err:
             msg = t(lang, "reschedule_too_late")
         elif "Not allowed" in err or "Not editable" in err:
             msg = t(lang, "access_denied")
-        elif "no longer available" in err:
-            msg = t(lang, "slot_unavailable")
         else:
             msg = t(lang, "error_generic")
-        await safe_callback_answer(callback, msg, show_alert=True)
+        await edit_or_send(callback, msg)
         return
     except Exception:
         logger.exception("Reschedule failed booking_id=%s", booking_id)
-        await safe_callback_answer(callback, t(lang, "error_generic"), show_alert=True)
+        await state.update_data(reschedule_confirm_in_progress=False)
+        await edit_or_send(callback, t(lang, "error_generic"))
         return
 
     await _notify_admins_booking_changed(bot, booking, service, old_dt, new_dt, lang)
@@ -470,7 +488,7 @@ async def start_change_comment(callback: CallbackQuery, lang: str, state: FSMCon
         if not booking or not client or booking.client_id != client.id:
             await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
             return
-        if not _is_editable_status(booking) or not service or not service.requires_location:
+        if not _is_editable_status(booking) or not service or not service.ask_client_comment:
             await safe_callback_answer(callback, t(lang, "booking_not_editable"), show_alert=True)
             return
 

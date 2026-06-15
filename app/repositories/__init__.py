@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +13,8 @@ from app.models import (
     Service,
     ServiceLocation,
     ServiceMedia,
+    SupportMessage,
+    SupportMessageStatus,
     UnavailableDate,
     UnavailableTimeRange,
     WorkingHours,
@@ -66,15 +68,43 @@ class ServiceRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_active(self) -> list[Service]:
-        return await self.list_active_services()
-
-    async def list_active_services(self) -> list[Service]:
+    async def list_client_services(self) -> list[Service]:
+        """Active, non-archived services visible to clients for booking."""
         result = await self.session.execute(
             select(Service)
             .where(Service.is_active.is_(True))
             .where(Service.archived_at.is_(None))
             .order_by(Service.name)
+        )
+        return list(result.scalars().all())
+
+    async def list_active_services(self) -> list[Service]:
+        """Active, non-archived services for admin main list."""
+        result = await self.session.execute(
+            select(Service)
+            .where(Service.is_active.is_(True))
+            .where(Service.archived_at.is_(None))
+            .order_by(Service.name)
+        )
+        return list(result.scalars().all())
+
+    async def list_disabled_services(self) -> list[Service]:
+        """Disabled but not archived services."""
+        result = await self.session.execute(
+            select(Service)
+            .where(Service.is_active.is_(False))
+            .where(Service.archived_at.is_(None))
+            .order_by(Service.name)
+        )
+        return list(result.scalars().all())
+
+    async def list_active(self) -> list[Service]:
+        return await self.list_client_services()
+
+    async def list_admin_services(self) -> list[Service]:
+        """All non-archived services (active + disabled). For diagnostics only."""
+        result = await self.session.execute(
+            select(Service).where(Service.archived_at.is_(None)).order_by(Service.name)
         )
         return list(result.scalars().all())
 
@@ -345,6 +375,74 @@ class BookingRepository:
             .where(Booking.end_at > start)
         )
         return list(result.scalars().all())
+
+    async def find_overlapping_active_booking(
+        self,
+        candidate_start: datetime,
+        candidate_end: datetime,
+        candidate_buffer_minutes: int,
+        buffer_map: dict[int, int],
+        *,
+        exclude_booking_id: int | None = None,
+    ) -> Booking | None:
+        """Return first active booking overlapping [start, end+buffer], or None."""
+        from app.utils.datetime_utils import to_local_naive
+
+        candidate_start = to_local_naive(candidate_start)
+        candidate_end_buffered = to_local_naive(candidate_end) + timedelta(
+            minutes=candidate_buffer_minutes
+        )
+        bookings = await self.list_active_between(candidate_start, candidate_end_buffered)
+        for booking in bookings:
+            if exclude_booking_id is not None and booking.id == exclude_booking_id:
+                continue
+            existing_start = to_local_naive(booking.start_at)
+            existing_end = to_local_naive(booking.end_at) + timedelta(
+                minutes=buffer_map.get(booking.service_id, 0)
+            )
+            if existing_start < candidate_end_buffered and existing_end > candidate_start:
+                return booking
+        return None
+
+    async def has_active_overlap(
+        self,
+        candidate_start: datetime,
+        candidate_end: datetime,
+        candidate_buffer_minutes: int,
+        buffer_map: dict[int, int],
+        *,
+        exclude_booking_id: int | None = None,
+    ) -> tuple[bool, int | None]:
+        conflict = await self.find_overlapping_active_booking(
+            candidate_start,
+            candidate_end,
+            candidate_buffer_minutes,
+            buffer_map,
+            exclude_booking_id=exclude_booking_id,
+        )
+        if conflict is None:
+            return False, None
+        return True, conflict.id
+
+    async def find_exact_active_duplicate(
+        self,
+        service_id: int,
+        start_at: datetime,
+        *,
+        exclude_booking_id: int | None = None,
+    ) -> Booking | None:
+        from app.utils.datetime_utils import normalize_slot, slots_match
+
+        start_at = normalize_slot(start_at)
+        day_start = start_at.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = start_at.replace(hour=23, minute=59, second=59, microsecond=0)
+        bookings = await self.list_active_between(day_start, day_end)
+        for booking in bookings:
+            if exclude_booking_id is not None and booking.id == exclude_booking_id:
+                continue
+            if booking.service_id == service_id and slots_match(booking.start_at, start_at):
+                return booking
+        return None
 
     async def list_upcoming(self, limit: int = 50) -> list[Booking]:
         now = now_local()
@@ -637,3 +735,67 @@ class ServiceLocationRepository:
             return "hidden"
         await self.delete(location)
         return "deleted"
+
+
+class SupportMessageRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get_by_id(self, message_id: int) -> SupportMessage | None:
+        result = await self.session.execute(
+            select(SupportMessage).where(SupportMessage.id == message_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_for_client_telegram(
+        self, client_telegram_id: int, *, limit: int = 20
+    ) -> list[SupportMessage]:
+        result = await self.session.execute(
+            select(SupportMessage)
+            .where(SupportMessage.client_telegram_id == client_telegram_id)
+            .order_by(SupportMessage.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def create(
+        self,
+        client_telegram_id: int,
+        client_name: str,
+        client_username: str | None,
+        message_text: str,
+        *,
+        topic: str | None = None,
+        booking_id: int | None = None,
+    ) -> SupportMessage:
+        item = SupportMessage(
+            client_telegram_id=client_telegram_id,
+            client_name=client_name,
+            client_username=client_username,
+            message_text=message_text,
+            topic=topic,
+            booking_id=booking_id,
+            status=SupportMessageStatus.OPEN,
+        )
+        self.session.add(item)
+        await self.session.flush()
+        return item
+
+    async def mark_replied(
+        self,
+        message: SupportMessage,
+        admin_telegram_id: int,
+        reply_text: str,
+    ) -> SupportMessage:
+        message.admin_reply_text = reply_text
+        message.replied_by_admin_id = admin_telegram_id
+        message.status = SupportMessageStatus.REPLIED
+        message.replied_at = datetime.now(timezone.utc)
+        await self.session.flush()
+        return message
+
+    async def mark_closed(self, message: SupportMessage) -> SupportMessage:
+        message.status = SupportMessageStatus.CLOSED
+        message.closed_at = datetime.now(timezone.utc)
+        await self.session.flush()
+        return message

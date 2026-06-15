@@ -14,8 +14,8 @@ Clients book appointments in Telegram. Admins manage services, schedule, media, 
 
 | Area | Capabilities |
 |------|----------------|
-| **Client** | Book appointments, service photo/video cards, fixed locations, client address + comment, my bookings, reschedule/edit, cancel, RU/EN |
-| **Admin** | Services CRUD, archive/restore, duration/buffer, media (5 photos + 1 video), service locations, working hours, unavailable dates, bookings, bot settings, reminders |
+| **Client** | Book appointments, service photo/video cards, fixed locations, client address + comment, my bookings, reschedule/edit, cancel, contact admin via bot, RU/EN |
+| **Admin** | Services CRUD, archive/restore, duration/buffer, media (5 photos + 1 video), service locations, working hours, unavailable dates, bookings, bot settings (custom /start text + photo), reminders |
 | **Engine** | Availability (working hours + blocks + bookings + buffer + Google Calendar busy times), SQLite migrations, Docker |
 
 ---
@@ -90,8 +90,48 @@ Copy from `.env.example`. **Never commit `.env` to git.**
 5. **Media** — add photos/video, set cover, toggle client visibility
 6. **Working hours** — set days and times clients can book
 7. **Unavailable dates** — block full days or time ranges
-8. **Bot settings** — auto-confirm, reminders, contact username, language, Google Calendar
+8. **Bot settings** — auto-confirm, reminders, contact username, language, **👋 Start screen** (custom RU/EN `/start` text and optional photo), Google Calendar
 9. Test a full client booking end-to-end
+
+---
+
+## Custom /start screen
+
+Admins can customize the welcome screen without code changes:
+
+1. `/admin` → **⚙️ Bot settings** → **👋 Start screen**
+2. Edit RU/EN text separately (max 1000 characters — fits under a photo caption)
+3. Upload separate RU and EN photos (stored as Telegram `file_id` only — no local media files)
+4. Enable/disable each language photo independently, preview RU/EN separately, or reset to defaults
+
+When a user sends `/start`, they see text and photo for their language (RU or EN).
+
+### Available languages
+
+In **⚙️ Bot settings → 🌐 Available languages**, the admin can choose:
+
+- **Russian only** — hides the 🌐 Language button; all users see Russian UI and RU start screen settings only
+- **English only** — hides language switching; EN start screen settings only
+- **Russian + English** — language button appears; users can switch; both RU and EN start screen controls are shown
+
+Stored RU/EN start screen content is never deleted when a language is hidden. Optional `.env` default: `ENABLED_LANGUAGES=ru,en`.
+
+**Backward compatibility:** if only the legacy `start_photo_file_id` is set (old single-photo setup), it is used as a fallback when the language-specific photo is missing and legacy photo is enabled.
+
+---
+
+## Contact admin (in-bot support)
+
+Clients tap **📞 Contact admin** to open a **support menu** with booking-related topics (booking question, reschedule, cancel, payment, other).
+
+- **📝 New request** — choose a topic and send a message
+- **📋 My requests** — view past support requests and admin replies
+- For reschedule/cancel topics, clients can optionally attach an active booking
+- All admins from `ADMIN_IDS` receive requests with **Reply** / **Close** buttons
+- Messages are stored in `support_messages` (SQLite) with topic and optional `booking_id`
+- Optional `contact_admin_username` in settings is shown as a direct `@username` fallback on the start screen
+
+Booking-specific **✉️ Message client** in admin booking detail is unchanged.
 
 ---
 

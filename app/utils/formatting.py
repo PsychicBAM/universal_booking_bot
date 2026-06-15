@@ -28,18 +28,26 @@ def _service_location_lines(booking: Booking, lang: str) -> list[str]:
 
 def _location_comment_lines(
     booking: Booking,
+    service: Service | None,
     lang: str,
     *,
-    include_location: bool,
-    include_comment: bool,
+    admin_view: bool = False,
 ) -> list[str]:
     lines: list[str] = []
-    if include_location:
+    show_address = bool(booking.location_text) or bool(service and service.requires_location)
+    if show_address:
         location = escape(booking.location_text) if booking.location_text else t(lang, "not_provided")
         lines.append(t(lang, "client_address_label", location=location))
-    if include_comment:
-        comment = escape(booking.client_comment) if booking.client_comment else t(lang, "not_provided")
-        lines.append(t(lang, "comment_label", comment=comment))
+
+    show_comment = bool(booking.client_comment) or bool(service and service.ask_client_comment)
+    if show_comment:
+        if booking.client_comment:
+            comment = escape(booking.client_comment)
+        elif service and service.ask_client_comment:
+            comment = t(lang, "comment_not_provided")
+        else:
+            comment = escape(booking.client_comment) if booking.client_comment else t(lang, "not_provided")
+        lines.append(t(lang, "service_comment_label", comment=comment))
     return lines
 
 
@@ -68,12 +76,16 @@ def format_service_admin(
     price = f"{service.price} ₽" if service.price else t(lang, "price_free")
     desc = escape(service.description) if service.description else ""
     location_status = t(lang, "label_enabled") if service.requires_location else t(lang, "label_disabled")
+    comment_status = (
+        t(lang, "label_enabled") if service.ask_client_comment else t(lang, "label_disabled")
+    )
     media_status = t(lang, "media_enabled") if service.show_media_to_clients else t(lang, "media_disabled")
     return (
         f"<b>{escape(service.name)}</b>\n"
         f"{t(lang, 'duration_label', duration=format_duration(lang, service.duration_minutes))}\n"
         f"{t(lang, 'buffer_after_service', buffer=format_buffer(lang, service.buffer_after_minutes))}\n"
         f"{t(lang, 'service_requires_location', status=location_status)}\n"
+        f"{t(lang, 'service_comment_setting', status=comment_status)}\n"
         f"{t(lang, 'service_locations_count', count=str(locations_count))}\n"
         f"{t(lang, 'photos_count', count=str(photos_count))}\n"
         f"{t(lang, 'videos_count', count=str(videos_count))}\n"
@@ -100,13 +112,9 @@ def format_booking(
         f"👤 {escape(booking.client_name)}",
         f"📞 {escape(booking.client_phone or '—')}",
     ]
-    show_location = show_location_comment or admin_view or bool(booking.location_text)
-    show_comment = show_location_comment or admin_view or bool(booking.client_comment)
-    if service and service.requires_location:
-        show_location = True
-        show_comment = True
     lines.extend(_service_location_lines(booking, lang))
-    lines.extend(_location_comment_lines(booking, lang, include_location=show_location, include_comment=show_comment))
+    if show_location_comment or admin_view:
+        lines.extend(_location_comment_lines(booking, service, lang, admin_view=admin_view))
     lines.append(t(lang, "booking_status_line", status=status))
     return "\n".join(lines)
 
@@ -125,17 +133,24 @@ def format_client_booking_detail(booking: Booking, service: Service, lang: str =
             service_location += f"\n{t(lang, 'address_label', address=escape(booking.service_location_address))}"
     else:
         service_location = t(lang, "not_provided")
-    client_address = escape(booking.location_text) if booking.location_text else t(lang, "not_provided")
-    comment = escape(booking.client_comment) if booking.client_comment else t(lang, "not_provided")
-    return (
-        f"{t(lang, 'my_booking_detail_title')}\n"
-        f"{t(lang, 'label_service')}: {service_name}\n"
-        f"{t(lang, 'label_datetime')}: {format_datetime(booking.start_at)}\n"
-        f"{t(lang, 'my_booking_service_location')}: {service_location}\n"
-        f"{t(lang, 'my_booking_client_address')}: {client_address}\n"
-        f"{t(lang, 'my_booking_comment')}: {comment}\n"
-        f"{t(lang, 'booking_status_line', status=status)}"
-    )
+    lines = [
+        f"{t(lang, 'my_booking_detail_title')}\n",
+        f"{t(lang, 'label_service')}: {service_name}",
+        f"{t(lang, 'label_datetime')}: {format_datetime(booking.start_at)}",
+        f"{t(lang, 'my_booking_service_location')}: {service_location}",
+    ]
+    if booking.location_text or service.requires_location:
+        client_address = escape(booking.location_text) if booking.location_text else t(lang, "not_provided")
+        lines.append(f"{t(lang, 'my_booking_client_address')}: {client_address}")
+    if booking.client_comment or service.ask_client_comment:
+        comment = (
+            escape(booking.client_comment)
+            if booking.client_comment
+            else t(lang, "comment_not_provided")
+        )
+        lines.append(f"{t(lang, 'my_booking_comment')}: {comment}")
+    lines.append(t(lang, "booking_status_line", status=status))
+    return "\n".join(lines)
 
 
 def parse_time(text: str) -> time | None:

@@ -8,6 +8,7 @@ from app.bot.keyboards.settings_kb import (
     settings_advanced_kb,
     settings_calendar_kb,
     settings_contact_kb,
+    settings_enabled_languages_kb,
     settings_language_kb,
     settings_main_kb,
     settings_reminders_kb,
@@ -15,10 +16,17 @@ from app.bot.keyboards.settings_kb import (
     test_admin_presets_kb,
     test_client_presets_kb,
 )
+from app.bot.keyboards.start_screen_kb import start_screen_menu_kb
 from app.config import get_settings
 from app.database.session import async_session_factory
 from app.repositories import SettingsRepository
 from app.services.bot_settings_service import BotSettingsSnapshot, load_bot_settings_snapshot
+from app.services.language_service import enabled_languages_mode_label, parse_enabled_languages_value
+from app.services.start_screen_service import (
+    StartScreenConfig,
+    format_photo_status_line,
+    load_start_screen_config,
+)
 
 
 def _enabled_label(lang: str, enabled: bool) -> str:
@@ -128,9 +136,19 @@ async def edit_to_contact(callback: CallbackQuery, lang: str) -> None:
 
 
 async def edit_to_language(callback: CallbackQuery, lang: str) -> None:
+    snapshot = await get_snapshot(callback.from_user.id)
     await callback.message.edit_text(
         t(lang, "settings_language_title"),
-        reply_markup=settings_language_kb(lang),
+        reply_markup=settings_language_kb(lang, snapshot.enabled_languages),
+    )
+
+
+async def edit_to_enabled_languages(callback: CallbackQuery, lang: str) -> None:
+    snapshot = await get_snapshot(callback.from_user.id)
+    await callback.message.edit_text(
+        f"{t(lang, 'settings_enabled_languages_title')}\n\n"
+        f"{t(lang, 'settings_enabled_languages_body', current=enabled_languages_mode_label(lang, snapshot.enabled_languages))}",
+        reply_markup=settings_enabled_languages_kb(lang),
     )
 
 
@@ -180,5 +198,55 @@ async def send_calendar_screen(message: Message, lang: str) -> None:
     await message.answer(
         f"{t(lang, 'settings_calendar_title')}\n\n{format_calendar_text(lang, env_on, db_on, calendar_id)}",
         reply_markup=settings_calendar_kb(lang, env_on, db_on),
+    )
+
+
+def format_start_screen_text(config: StartScreenConfig, lang: str, enabled_languages: list[str] | None = None) -> str:
+    codes = parse_enabled_languages_value(",".join(enabled_languages or ["ru", "en"]))
+    if len(codes) == 1:
+        code = codes[0]
+        text_status = t(
+            lang,
+            "start_screen_text_custom" if (config.has_custom_ru() if code == "ru" else config.has_custom_en()) else "start_screen_text_default",
+        )
+        photo_status = format_photo_status_line(config, code, lang)
+        return t(lang, "start_screen_menu_body_single", text=text_status, photo=photo_status)
+    ru_status = t(
+        lang,
+        "start_screen_text_custom" if config.has_custom_ru() else "start_screen_text_default",
+    )
+    en_status = t(
+        lang,
+        "start_screen_text_custom" if config.has_custom_en() else "start_screen_text_default",
+    )
+    photo_ru = format_photo_status_line(config, "ru", lang)
+    photo_en = format_photo_status_line(config, "en", lang)
+    return t(
+        lang,
+        "start_screen_menu_body",
+        text_ru=ru_status,
+        text_en=en_status,
+        photo_ru=photo_ru,
+        photo_en=photo_en,
+    )
+
+
+async def send_start_screen_menu(message: Message, lang: str) -> None:
+    async with async_session_factory() as session:
+        config = await load_start_screen_config(session)
+        snapshot = await load_bot_settings_snapshot(session, message.from_user.id)
+    await message.answer(
+        f"{t(lang, 'start_screen_menu_title')}\n\n{format_start_screen_text(config, lang, snapshot.enabled_languages)}",
+        reply_markup=start_screen_menu_kb(config, lang, snapshot.enabled_languages),
+    )
+
+
+async def edit_to_start_screen(callback: CallbackQuery, lang: str) -> None:
+    async with async_session_factory() as session:
+        config = await load_start_screen_config(session)
+        snapshot = await load_bot_settings_snapshot(session, callback.from_user.id)
+    await callback.message.edit_text(
+        f"{t(lang, 'start_screen_menu_title')}\n\n{format_start_screen_text(config, lang, snapshot.enabled_languages)}",
+        reply_markup=start_screen_menu_kb(config, lang, snapshot.enabled_languages),
     )
 

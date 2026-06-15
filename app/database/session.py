@@ -72,6 +72,10 @@ async def _migrate_sqlite_columns() -> None:
             await conn.exec_driver_sql(
                 "ALTER TABLE services ADD COLUMN requires_location BOOLEAN NOT NULL DEFAULT 0"
             )
+        if "ask_client_comment" not in service_columns:
+            await conn.exec_driver_sql(
+                "ALTER TABLE services ADD COLUMN ask_client_comment BOOLEAN NOT NULL DEFAULT 0"
+            )
         if "show_media_to_clients" not in service_columns:
             await conn.exec_driver_sql(
                 "ALTER TABLE services ADD COLUMN show_media_to_clients BOOLEAN NOT NULL DEFAULT 1"
@@ -89,6 +93,82 @@ async def _migrate_sqlite_columns() -> None:
             await conn.exec_driver_sql("ALTER TABLE bookings ADD COLUMN service_location_title VARCHAR(255)")
         if "service_location_address" not in booking_columns:
             await conn.exec_driver_sql("ALTER TABLE bookings ADD COLUMN service_location_address TEXT")
+
+        result = await conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='support_messages'"
+        )
+        if result.fetchone():
+            result = await conn.exec_driver_sql("PRAGMA table_info(support_messages)")
+            support_columns = {row[1] for row in result.fetchall()}
+            if "topic" not in support_columns:
+                await conn.exec_driver_sql("ALTER TABLE support_messages ADD COLUMN topic VARCHAR(50)")
+            if "booking_id" not in support_columns:
+                await conn.exec_driver_sql("ALTER TABLE support_messages ADD COLUMN booking_id INTEGER")
+
+    await _maybe_add_booking_slot_unique_index()
+
+
+async def _maybe_add_booking_slot_unique_index() -> None:
+    """Partial unique index for active exact slot duplicates. Skipped if duplicates exist."""
+    import logging
+
+    log = logging.getLogger(__name__)
+    if "sqlite" not in settings.database_url:
+        log.info(
+            "PostgreSQL: consider EXCLUDE constraint or SELECT FOR UPDATE on bookings for slot safety"
+        )
+        return
+
+    async with engine.begin() as conn:
+        index_check = await conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_bookings_active_slot'"
+        )
+        if index_check.fetchone():
+            return
+
+        from collections import defaultdict
+
+        from app.utils.datetime_utils import normalize_slot
+
+        dupes = await conn.exec_driver_sql(
+            """
+            SELECT id, service_id, start_at
+            FROM bookings
+            WHERE status IN ('pending', 'confirmed')
+            """
+        )
+        counts: dict[tuple[int, str], int] = defaultdict(int)
+        for row in dupes.fetchall():
+            _id, service_id, start_raw = row[0], row[1], row[2]
+            if start_raw is None:
+                continue
+            if isinstance(start_raw, str):
+                from datetime import datetime as dt_cls
+
+                try:
+                    parsed = dt_cls.fromisoformat(start_raw.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+            else:
+                parsed = start_raw
+            key = (service_id, normalize_slot(parsed).isoformat())
+            counts[key] += 1
+
+        if any(count > 1 for count in counts.values()):
+            log.warning(
+                "Skipping idx_bookings_active_slot: duplicate slot group(s) exist. "
+                "Run: python scripts/find_duplicate_bookings.py",
+            )
+            return
+
+        await conn.exec_driver_sql(
+            """
+            CREATE UNIQUE INDEX idx_bookings_active_slot
+            ON bookings (service_id, start_at)
+            WHERE status IN ('pending', 'confirmed')
+            """
+        )
+        log.info("Created partial unique index idx_bookings_active_slot")
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

@@ -8,8 +8,9 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.bot.handlers import admin, booking_edit, cancel, client, common, service_locations, service_media, start
+from app.bot.handlers import admin, booking_edit, cancel, client, common, service_locations, service_media, start, support
 from app.bot.handlers import settings as settings_handlers
+from app.bot.handlers import start_screen_settings
 from app.bot.handlers import unavailable
 from app.bot.handlers import working_hours
 from app.bot.middlewares import AdminMiddleware, LanguageMiddleware
@@ -55,6 +56,10 @@ async def main() -> None:
     await init_db()
     await seed_default_working_hours()
 
+    from app.services.language_service import init_language_cache
+
+    await init_language_cache()
+
     from app.database.session import async_session_factory
     from app.services.calendar_service import CalendarService
 
@@ -76,10 +81,12 @@ async def main() -> None:
     dp.include_router(start.router)
     dp.include_router(working_hours.router)
     dp.include_router(unavailable.router)
+    dp.include_router(start_screen_settings.router)
     dp.include_router(settings_handlers.router)
     dp.include_router(service_media.router)
     dp.include_router(service_locations.router)
     dp.include_router(booking_edit.router)
+    dp.include_router(support.router)
     dp.include_router(client.router)
     dp.include_router(admin.router)
     dp.include_router(common.router)

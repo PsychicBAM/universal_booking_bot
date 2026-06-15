@@ -8,7 +8,16 @@ from app.bot.utils.callbacks import safe_callback_answer
 from app.bot.i18n import CANCEL_TEXTS, t
 from app.bot.keyboards import admin_menu, main_menu
 from app.bot.settings_ui import send_settings_main_after_cancel
-from app.bot.states import AdminServiceLocationStates, AdminServiceMediaStates, AdminUnavailableStates, AdminWorkingHoursStates, ClientBookingEditStates
+from app.bot.states import (
+    AdminServiceLocationStates,
+    AdminServiceMediaStates,
+    AdminStartScreenStates,
+    AdminSupportStates,
+    AdminUnavailableStates,
+    AdminWorkingHoursStates,
+    ClientBookingEditStates,
+    ClientSupportStates,
+)
 
 router = Router()
 
@@ -20,6 +29,8 @@ ADMIN_STATE_PREFIXES = (
     "AdminUnavailableStates",
     "AdminMessageStates",
     "AdminSettingsStates",
+    "AdminStartScreenStates",
+    "AdminSupportStates",
 )
 
 
@@ -113,6 +124,26 @@ async def global_cancel(message: Message, state: FSMContext, is_admin: bool, lan
             await _send_cancel_destination(message, "client", is_admin, lang)
         return
 
+    if current.startswith("AdminStartScreenStates"):
+        await state.clear()
+        await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
+        from app.bot.settings_ui import send_start_screen_menu
+
+        await send_start_screen_menu(message, lang)
+        return
+
+    if current.startswith("ClientSupportStates"):
+        await state.clear()
+        await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
+        await message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        return
+
+    if current.startswith("AdminSupportStates"):
+        await state.clear()
+        await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
+        await message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+        return
+
     destination = await cancel_destination(state, is_admin)
     settings_state = current.startswith("AdminSettingsStates")
     await state.clear()
@@ -178,6 +209,30 @@ async def cancel_flow_callback(callback: CallbackQuery, state: FSMContext, is_ad
             from app.bot.handlers.booking_edit import show_client_booking_detail
 
             await show_client_booking_detail(callback, booking_id, callback.from_user.id, lang)
+        return
+
+    if current.startswith("AdminStartScreenStates"):
+        await state.clear()
+        await safe_callback_answer(callback, t(lang, "cancelled"))
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+        from app.bot.settings_ui import send_start_screen_menu
+
+        await send_start_screen_menu(callback.message, lang)
+        return
+
+    if current.startswith("ClientSupportStates"):
+        await state.clear()
+        await safe_callback_answer(callback, t(lang, "cancelled"))
+        await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        return
+
+    if current.startswith("AdminSupportStates"):
+        await state.clear()
+        await safe_callback_answer(callback, t(lang, "cancelled"))
+        await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
         return
 
     destination = await cancel_destination(state, is_admin)

@@ -1,12 +1,14 @@
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
+import logging
 
 from app.bot.utils.callbacks import safe_callback_answer
 from app.bot.i18n import t
 from app.bot.keyboards import main_menu
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 @router.callback_query(F.data == "noop")
@@ -57,3 +59,13 @@ async def stale_location_callback(callback: CallbackQuery, state: FSMContext, is
 @router.callback_query(F.data == "cb:svc_back")
 async def stale_back_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool, lang: str) -> None:
     await _expired_session(callback, state, is_admin, lang)
+
+
+@router.callback_query()
+async def unknown_callback_logger(callback: CallbackQuery, lang: str = "ru") -> None:
+    logger.warning(
+        "UNKNOWN CALLBACK: data=%r from_user=%s",
+        callback.data,
+        callback.from_user.id if callback.from_user else None,
+    )
+    await safe_callback_answer(callback, t(lang, "unknown_action_open_again"), show_alert=True)

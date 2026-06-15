@@ -108,7 +108,7 @@ def format_booking(
     service_name = escape(service.name) if service else f"Service #{booking.service_id}"
     status = status_label(lang, booking.status.value)
     lines = [
-        f"📋 <b>{service_name}</b>",
+        f"📋 {service_name}",
         t(lang, "booking_id_label", id=str(booking.id)),
         f"📅 {format_datetime(booking.start_at)}",
         f"👤 {escape(booking.client_name)}",

@@ -12,6 +12,10 @@ from app.bot.utils.telegram_ui import edit_or_send
 from app.database.session import async_session_factory
 from app.models import Client
 from app.repositories import BookingRepository, ServiceRepository
+from app.services.admin_attendance_service import (
+    mark_manual_attendance_sent,
+    send_attendance_question_to_client,
+)
 from app.services.admin_bookings_service import parse_attendance_back
 from app.services.attendance_service import is_booking_attendance_eligible
 

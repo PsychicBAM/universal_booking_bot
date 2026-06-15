@@ -527,10 +527,24 @@ def main() -> int:
         )
         service = SimpleNamespace(name="Lesson", requires_location=False, ask_client_comment=False)
         rendered = format_booking(booking, service, "ru", show_location_comment=True)
-        if "<b>Lesson</b>" in rendered and "📋" in rendered:
-            pass
-        if "&lt;b&gt;" in rendered:
-            print("FAIL: test G — double-escaped HTML")
+        if "<b>" in rendered or "</b>" in rendered:
+            print("FAIL: test G — literal HTML tags in booking card")
+            return 1
+        if "📋 Lesson" not in rendered:
+            print("FAIL: test G — booking card service line")
+            return 1
+
+        import inspect
+
+        from app.bot.handlers import admin as admin_handlers
+        from app.bot.handlers import admin_attendance as admin_attendance_handlers
+
+        confirm_src = inspect.getsource(admin_handlers.admin_confirm_booking)
+        if "@router.callback_query" not in confirm_src or "adm_confirm:" not in confirm_src:
+            print("FAIL: admin_confirm_booking must be callback_query handler")
+            return 1
+        if admin_attendance_handlers.send_attendance_question_to_client is None:
+            print("FAIL: admin_attendance missing send_attendance_question_to_client import")
             return 1
 
         print("OK: fast booking reuse and HTML formatting")

@@ -657,10 +657,11 @@ async def admin_confirm_booking(callback: CallbackQuery, is_admin: bool, lang: s
             service = await ServiceRepository(session).get_by_id(booking.service_id)
             client = await session.get(Client, booking.client_id)
     except ValueError:
-        await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+        await safe_edit_text(callback.message, t(lang, "not_found"))
         return
-    await safe_edit_text(callback.message,
-        f"{t(lang, 'booking_confirmed_admin')}\n{format_booking(booking, service, lang, admin_view=True)}"
+    await safe_edit_text(
+        callback.message,
+        f"{t(lang, 'booking_confirmed_admin')}\n{format_booking(booking, service, lang, admin_view=True)}",
     )
     if client:
         client_lang = client.language or get_settings().default_language
@@ -671,7 +672,6 @@ async def admin_confirm_booking(callback: CallbackQuery, is_admin: bool, lang: s
             )
         except Exception:
             pass
-    await safe_callback_answer(callback)
 
 
 @router.callback_query(F.data.startswith("adm_cancel:"))

@@ -21,7 +21,6 @@ from app.bot.keyboards import (
     admin_menu,
     bookings_kb,
     cancel_kb,
-    confirm_kb,
     dates_kb,
     main_menu,
     services_kb,
@@ -29,6 +28,21 @@ from app.bot.keyboards import (
     times_kb,
 )
 from app.bot.states import BookingStates
+from app.bot.booking_client_data import (
+    begin_name_collection,
+    begin_phone_edit,
+    begin_phone_step,
+    continue_after_phone,
+    continue_booking_after_time,
+    handle_contact_message,
+    handle_manual_name,
+    handle_manual_phone_text,
+    handle_phone_method_text,
+    load_settings,
+    return_to_confirmation,
+    show_phone_collection,
+)
+from app.bot.keyboards.booking_confirm_kb import booking_confirm_kb, booking_edit_menu_kb
 from app.config import get_settings
 from app.database.session import async_session_factory
 from app.repositories import (
@@ -63,11 +77,11 @@ def _booking_summary(data: dict, lang: str) -> str:
     slot = slot_from_timestamp(data["slot_ts"])
     service_name = escape(str(data.get("service_name") or ""))
     client_name = escape(str(data.get("client_name") or ""))
-    phone = escape(str(data.get("client_phone") or "")) or t(lang, "not_provided")
+    phone = escape(str(data.get("client_phone") or "")) or t(lang, "booking_phone_not_provided")
     requires_location = bool(data.get("requires_location"))
     ask_client_comment = bool(data.get("ask_client_comment"))
     lines = [
-        f"{t(lang, 'confirm_booking')}\n",
+        f"{t(lang, 'booking_review_title')}\n",
         f"{t(lang, 'label_service')}: {service_name}",
         f"{t(lang, 'label_datetime')}: {format_datetime(slot)}",
         f"{t(lang, 'label_name')}: {client_name}",
@@ -111,7 +125,7 @@ async def _show_confirmation(message: Message, state: FSMContext, lang: str) -> 
     await state.set_state(BookingStates.confirming)
     await message.answer(
         _booking_summary(await state.get_data(), lang),
-        reply_markup=confirm_kb(lang),
+        reply_markup=booking_confirm_kb(lang),
     )
 
 
@@ -206,12 +220,17 @@ async def _start_date_selection(
 
 async def _notify_admins_new_booking(bot, booking, service, lang: str) -> None:
     settings = get_settings()
+    async with async_session_factory() as session:
+        from app.models import Client
+
+        client = await session.get(Client, booking.client_id)
+        username = client.username if client else None
     for admin_id in settings.admin_ids:
         admin_lang = await get_user_language(admin_id)
         try:
             await bot.send_message(
                 admin_id,
-                f"{t(admin_lang, 'new_booking_admin')}\n\n{format_booking(booking, service, admin_lang, admin_view=True)}",
+                f"{t(admin_lang, 'new_booking_admin')}\n\n{format_booking(booking, service, admin_lang, admin_view=True, client_username=username)}",
             )
         except Exception:
             pass
@@ -478,38 +497,104 @@ async def choose_time(callback: CallbackQuery, state: FSMContext, lang: str) -> 
     slot_ts = int(callback.data.split(":", 1)[1])
     slot = slot_from_timestamp(slot_ts)
     await state.update_data(slot_ts=slot_ts, flow_origin="client")
-    await state.set_state(BookingStates.entering_name)
     await edit_or_send(callback, t(lang, "selected", dt=format_datetime(slot)))
+    await continue_booking_after_time(callback.message, state, lang, callback.from_user)
+
+
+@router.callback_query(BookingStates.confirming_telegram_name, F.data == "bkdata:name:yes")
+async def confirm_telegram_name_yes(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    from app.services.client_data_service import build_telegram_full_name
+
+    name = build_telegram_full_name(callback.from_user)
+    if not name:
+        await state.set_state(BookingStates.entering_name)
+        await callback.message.answer(t(lang, "enter_name"), reply_markup=cancel_kb(lang))
+        return
+    await state.update_data(client_name=name)
+    async with async_session_factory() as session:
+        await ClientRepository(session).set_display_name(callback.from_user.id, name)
+        await session.commit()
+    settings = await load_settings()
+    await begin_phone_step(callback.message, state, lang, callback.from_user.id, settings)
+
+
+@router.callback_query(BookingStates.confirming_telegram_name, F.data == "bkdata:name:manual")
+async def confirm_telegram_name_manual(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    await state.set_state(BookingStates.entering_name)
     await callback.message.answer(t(lang, "enter_name"), reply_markup=cancel_kb(lang))
+
+
+@router.callback_query(BookingStates.choosing_phone_method, F.data.startswith("bkdata:phone:"))
+async def choose_phone_method(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    action = callback.data.split(":", 2)[2]
+    settings = await load_settings()
+    if action == "saved_yes":
+        async with async_session_factory() as session:
+            client = await ClientRepository(session).get_by_telegram_id(callback.from_user.id)
+        if client and client.phone:
+            await state.update_data(client_phone=client.phone)
+            data = await state.get_data()
+            if data.get("editing_from_confirm"):
+                await state.update_data(editing_from_confirm=False)
+                await return_to_confirmation(callback.message, state, lang)
+                return
+            await continue_after_phone(callback.message, state, lang)
+        return
+    if action == "contact":
+        await show_phone_collection(callback.message, state, lang, settings)
+        return
+    if action == "manual":
+        await state.set_state(BookingStates.entering_phone_manual)
+        await callback.message.answer(t(lang, "booking_manual_phone_prompt"), reply_markup=cancel_kb(lang))
+        return
+    if action == "skip" and not settings.phone_required:
+        await state.update_data(client_phone=None)
+        data = await state.get_data()
+        if data.get("editing_from_confirm"):
+            await state.update_data(editing_from_confirm=False)
+            await return_to_confirmation(callback.message, state, lang)
+            return
+        await continue_after_phone(callback.message, state, lang)
 
 
 @router.message(BookingStates.entering_name, F.text)
 async def enter_name(message: Message, state: FSMContext, lang: str) -> None:
-    name = message.text.strip()
-    if not name:
-        await message.answer(t(lang, "enter_name"), reply_markup=cancel_kb(lang))
+    await state.update_data(flow_origin="client")
+    await handle_manual_name(message, state, lang)
+
+
+@router.message(BookingStates.entering_phone_manual, F.text)
+async def enter_phone_manual(message: Message, state: FSMContext, lang: str) -> None:
+    await state.update_data(flow_origin="client")
+    await handle_manual_phone_text(message, state, lang)
+
+
+@router.message(BookingStates.choosing_phone_method, F.contact)
+async def enter_phone_contact(message: Message, state: FSMContext, lang: str) -> None:
+    await state.update_data(flow_origin="client")
+    await handle_contact_message(message, state, lang)
+
+
+@router.message(BookingStates.choosing_phone_method, F.text)
+async def enter_phone_method_text(message: Message, state: FSMContext, lang: str) -> None:
+    await state.update_data(flow_origin="client")
+    if await handle_phone_method_text(message, state, lang):
         return
-    await state.update_data(client_name=name, flow_origin="client")
-    await state.set_state(BookingStates.entering_phone)
-    await message.answer(t(lang, "enter_phone"), reply_markup=cancel_kb(lang))
+    if message.text.strip() == t(lang, "cancel"):
+        return
+    settings = await load_settings()
+    if message.text.strip() == t(lang, "booking_share_phone_button"):
+        return
+    await message.answer(t(lang, "booking_contact_prompt"))
 
 
 @router.message(BookingStates.entering_phone, F.text)
-async def enter_phone(message: Message, state: FSMContext, lang: str) -> None:
-    phone = message.text.strip()
-    if not phone:
-        await message.answer(t(lang, "enter_phone"), reply_markup=cancel_kb(lang))
-        return
-    data = await state.get_data()
-    await state.update_data(client_phone=phone, flow_origin="client")
-    if data.get("requires_location"):
-        await state.set_state(BookingStates.entering_location)
-        await message.answer(t(lang, "enter_location"), reply_markup=cancel_kb(lang))
-        return
-    if data.get("ask_client_comment"):
-        await _prompt_comment(message, state, lang)
-        return
-    await _show_confirmation(message, state, lang)
+async def enter_phone_legacy(message: Message, state: FSMContext, lang: str) -> None:
+    await state.update_data(flow_origin="client")
+    await handle_manual_phone_text(message, state, lang)
 
 
 @router.message(BookingStates.entering_location, F.text)
@@ -520,6 +605,10 @@ async def enter_location(message: Message, state: FSMContext, lang: str) -> None
         return
     await state.update_data(location_text=location, flow_origin="client")
     data = await state.get_data()
+    if data.get("editing_from_confirm"):
+        await state.update_data(editing_from_confirm=False)
+        await _show_confirmation(message, state, lang)
+        return
     if data.get("ask_client_comment"):
         await _prompt_comment(message, state, lang)
         return
@@ -529,13 +618,100 @@ async def enter_location(message: Message, state: FSMContext, lang: str) -> None
 @router.message(BookingStates.entering_comment, F.text.in_(SKIP_TEXTS))
 async def skip_comment(message: Message, state: FSMContext, lang: str) -> None:
     await state.update_data(client_comment=None, flow_origin="client")
+    data = await state.get_data()
+    if data.get("editing_from_confirm"):
+        await state.update_data(editing_from_confirm=False)
     await _show_confirmation(message, state, lang)
 
 
 @router.message(BookingStates.entering_comment, F.text)
 async def enter_comment(message: Message, state: FSMContext, lang: str) -> None:
     await state.update_data(client_comment=message.text.strip(), flow_origin="client")
+    data = await state.get_data()
+    if data.get("editing_from_confirm"):
+        await state.update_data(editing_from_confirm=False)
     await _show_confirmation(message, state, lang)
+
+
+@router.callback_query(BookingStates.confirming, F.data == "bkdata:edit:menu")
+async def booking_edit_menu(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    data = await state.get_data()
+    await callback.message.answer(
+        t(lang, "booking_edit_what"),
+        reply_markup=booking_edit_menu_kb(
+            lang,
+            requires_location=bool(data.get("requires_location")),
+            ask_client_comment=bool(data.get("ask_client_comment")),
+        ),
+    )
+
+
+@router.callback_query(F.data == "bkdata:edit:back")
+async def booking_edit_back(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    await return_to_confirmation(callback.message, state, lang)
+
+
+@router.callback_query(F.data == "bkdata:edit:name")
+async def booking_edit_name(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    await state.update_data(editing_from_confirm=True)
+    await state.set_state(BookingStates.entering_name)
+    await callback.message.answer(t(lang, "enter_name"), reply_markup=cancel_kb(lang))
+
+
+@router.callback_query(F.data == "bkdata:edit:phone")
+async def booking_edit_phone(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    await state.update_data(editing_from_confirm=True)
+    await begin_phone_edit(callback.message, state, lang, callback.from_user.id)
+
+
+@router.callback_query(F.data == "bkdata:edit:location")
+async def booking_edit_location(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    await state.update_data(editing_from_confirm=True)
+    await state.set_state(BookingStates.entering_location)
+    await callback.message.answer(t(lang, "enter_location"), reply_markup=cancel_kb(lang))
+
+
+@router.callback_query(F.data == "bkdata:edit:comment")
+async def booking_edit_comment(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    await state.update_data(editing_from_confirm=True)
+    await _prompt_comment(callback.message, state, lang)
+
+
+@router.callback_query(BookingStates.confirming, F.data == "bk:confirm:back")
+async def booking_confirm_back(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    from datetime import date as date_cls
+
+    await safe_callback_answer(callback)
+    data = await state.get_data()
+    service_id = data.get("service_id")
+    target_date_raw = data.get("target_date")
+    if not service_id or not target_date_raw:
+        await edit_or_send(callback, t(lang, "session_expired"))
+        return
+    target_date = date_cls.fromisoformat(target_date_raw)
+    async with async_session_factory() as session:
+        availability = AvailabilityService(
+            WorkingHoursRepository(session),
+            UnavailableRepository(session),
+            BookingRepository(session),
+            CalendarService(session),
+        )
+        slots = await availability.get_available_slots(service_id, target_date, ServiceRepository(session))
+    if not slots:
+        await callback.message.answer(t(lang, "no_slots"))
+        return
+    await state.set_state(BookingStates.choosing_time)
+    await edit_or_send(
+        callback,
+        f"{format_date(target_date)}\n{t(lang, 'choose_time')}",
+        reply_markup=times_kb(slots, lang),
+    )
 
 
 @router.callback_query(BookingStates.confirming, F.data == "confirm:yes")
@@ -606,6 +782,7 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, is_admin: 
     await edit_or_send(
         callback,
         f"{msg}\n\n{format_booking(booking, service, lang, show_location_comment=True)}",
+        parse_mode="HTML",
     )
     await _notify_admins_new_booking(callback.bot, booking, service, lang)
     await state.clear()

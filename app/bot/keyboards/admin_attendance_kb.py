@@ -1,9 +1,9 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.bot.i18n import t
-from app.bot.utils.attendance_helpers import attendance_admin_label_indicator
+from app.bot.utils.booking_labels import format_admin_booking_button
 from app.models import Booking
-from app.utils.datetime_utils import to_local_naive
+from app.services.admin_bookings_service import parse_attendance_back
 
 DEFAULT_FILTER = "7d"
 
@@ -16,13 +16,8 @@ def _view_cb(booking_id: int, back: str) -> str:
     return f"adm_att:view:{booking_id}:{back}"
 
 
-def _parse_back_to_list_cb(back: str) -> str:
-    if not back.startswith("list:"):
-        return _list_cb(DEFAULT_FILTER, 0)
-    parts = back.removeprefix("list:").split(":")
-    filt = parts[0] if parts else DEFAULT_FILTER
-    page = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
-    return _list_cb(filt, page)
+def _bookings_list_cb(section: str, page: int) -> str:
+    return f"adm_book:list:{section}:{page}"
 
 
 def admin_attendance_filters_kb(filter_key: str, lang: str = "ru") -> list[list[InlineKeyboardButton]]:
@@ -54,16 +49,10 @@ def admin_attendance_list_kb(
 ) -> InlineKeyboardMarkup:
     rows = admin_attendance_filters_kb(filter_key, lang)
     for booking in bookings:
-        start = to_local_naive(booking.start_at)
-        indicator = attendance_admin_label_indicator(booking)
-        label = (
-            f"{indicator} #{booking.id} {start.strftime('%d.%m')} "
-            f"{start.strftime('%H:%M')} — {booking.client_name}"
-        )
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=label,
+                    text=format_admin_booking_button(booking, lang),
                     callback_data=_view_cb(booking.id, f"list:{filter_key}:{page}"),
                 )
             ]
@@ -86,7 +75,7 @@ def admin_attendance_list_kb(
             )
         if nav:
             rows.append(nav)
-    rows.append([InlineKeyboardButton(text=t(lang, "back"), callback_data="adm_bookings:list")])
+    rows.append([InlineKeyboardButton(text=t(lang, "bookings_back_to_hub"), callback_data="adm_book:hub")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -95,12 +84,8 @@ def admin_attendance_detail_kb(
     back: str,
     lang: str = "ru",
 ) -> InlineKeyboardMarkup:
-    if back.startswith("list:"):
-        back_cb = _parse_back_to_list_cb(back)
-        back_label = t(lang, "admin_attendance_back_to_list")
-    else:
-        back_cb = f"adm_booking:{booking_id}"
-        back_label = t(lang, "back")
+    section, page = parse_attendance_back(back)
+    back_cb = _bookings_list_cb(section, page)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -110,7 +95,7 @@ def admin_attendance_detail_kb(
                 )
             ],
             [InlineKeyboardButton(text=t(lang, "message_client_btn"), callback_data=f"adm_msg:{booking_id}")],
-            [InlineKeyboardButton(text=back_label, callback_data=back_cb)],
+            [InlineKeyboardButton(text=t(lang, "back"), callback_data=back_cb)],
         ]
     )
 

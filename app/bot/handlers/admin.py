@@ -5,17 +5,15 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.utils.callbacks import safe_callback_answer
+from app.bot.handlers.admin_bookings import show_bookings_hub
 from app.bot.utils.telegram_ui import edit_or_send, safe_edit_text
 
 from app.bot.i18n import format_buffer, format_duration, t
 from app.bot.keyboards import (
-    ADMIN_BOOKINGS_TEXTS,
     ADMIN_CALENDAR_TEXTS,
     ADMIN_SERVICES_TEXTS,
     admin_active_services_kb,
     admin_archived_services_kb,
-    admin_booking_detail_kb,
-    admin_bookings_kb,
     admin_disabled_services_kb,
     admin_menu,
     admin_service_delete_confirm_kb,
@@ -645,63 +643,14 @@ async def admin_service_edit_value(message: Message, state: FSMContext, lang: st
     await message.answer(text, reply_markup=kb)
 
 
-@router.message(F.text.in_(ADMIN_BOOKINGS_TEXTS))
-async def admin_bookings(message: Message, is_admin: bool, lang: str) -> None:
-    if not is_admin:
-        return
-    await show_admin_bookings(message, lang)
-
-
-@router.callback_query(F.data == "adm_bookings:list")
-async def admin_bookings_list(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
-    if not is_admin:
-        return
-    await safe_callback_answer(callback)
-    await show_admin_bookings(callback, lang)
-
-
-async def show_admin_bookings(
-    event: CallbackQuery | Message,
-    lang: str,
-    *,
-    prefix: str | None = None,
-) -> None:
-    async with async_session_factory() as session:
-        bookings = await BookingRepository(session).list_upcoming()
-    text = t(lang, "upcoming_bookings")
-    if prefix:
-        text = f"{prefix}\n\n{text}"
-    keyboard = admin_bookings_kb(bookings, lang)
-    if isinstance(event, CallbackQuery):
-        await edit_or_send(event, text, reply_markup=keyboard)
-    else:
-        await event.answer(text, reply_markup=keyboard)
-
-
-@router.callback_query(F.data.startswith("adm_booking:"))
-async def admin_booking_detail(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
-    if not is_admin:
-        return
-    booking_id = int(callback.data.split(":", 1)[1])
-    async with async_session_factory() as session:
-        booking = await BookingRepository(session).get_by_id(booking_id)
-        service = await ServiceRepository(session).get_by_id(booking.service_id) if booking else None
-    if not booking:
-        await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
-        return
-    await safe_edit_text(callback.message,
-        format_booking(booking, service, lang, admin_view=True),
-        reply_markup=admin_booking_detail_kb(booking_id, booking.status.value, lang),
-    )
-    await safe_callback_answer(callback)
-
-
 @router.callback_query(F.data.startswith("adm_confirm:"))
 async def admin_confirm_booking(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
         return
-    booking_id = int(callback.data.split(":", 1)[1])
+
+    await safe_callback_answer(callback)
+    booking_id = int(callback.data.rsplit(":", 1)[1])
     try:
         async with async_session_factory() as session:
             booking = await BookingService(session).confirm_booking(booking_id)
@@ -737,7 +686,7 @@ async def admin_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: st
     async with async_session_factory() as session:
         booking = await BookingRepository(session).get_by_id(booking_id)
         if not booking or booking.status == BookingStatus.CANCELLED:
-            await show_admin_bookings(
+            await show_bookings_hub(
                 callback,
                 lang,
                 prefix=t(lang, "booking_already_cancelled_or_missing"),
@@ -746,7 +695,7 @@ async def admin_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: st
         try:
             await BookingService(session).cancel_booking(booking_id)
         except ValueError:
-            await show_admin_bookings(
+            await show_bookings_hub(
                 callback,
                 lang,
                 prefix=t(lang, "booking_already_cancelled_or_missing"),
@@ -757,7 +706,7 @@ async def admin_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: st
             await edit_or_send(callback, t(lang, "error_generic"))
             return
 
-    await show_admin_bookings(
+    await show_bookings_hub(
         callback,
         lang,
         prefix=t(lang, "booking_cancelled_admin", id=str(booking_id)),
@@ -778,10 +727,17 @@ async def admin_message_client(callback: CallbackQuery, state: FSMContext, is_ad
 @router.message(AdminMessageStates.entering_message, F.text)
 async def admin_send_message(message: Message, state: FSMContext, bot: Bot, lang: str) -> None:
     data = await state.get_data()
+    client = None
     async with async_session_factory() as session:
-        booking = await BookingRepository(session).get_by_id(data["msg_booking_id"])
-        client = await session.get(Client, booking.client_id) if booking else None
-    if not booking or not client:
+        if data.get("msg_client_id"):
+            client = await session.get(Client, data["msg_client_id"])
+        elif data.get("msg_booking_id"):
+            booking = await BookingRepository(session).get_by_id(data["msg_booking_id"])
+            client = await session.get(Client, booking.client_id) if booking else None
+        else:
+            booking = None
+            client = None
+    if not client:
         await state.clear()
         await message.answer(t(lang, "not_found"), reply_markup=admin_menu(lang))
         return

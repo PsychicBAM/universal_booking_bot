@@ -25,6 +25,7 @@ def settings_main_kb(snapshot: BotSettingsSnapshot, lang: str) -> InlineKeyboard
     rows.extend(
         [
             [InlineKeyboardButton(text=t(lang, "settings_contact_btn"), callback_data="set:contact:open")],
+            [InlineKeyboardButton(text=t(lang, "client_data_settings_button"), callback_data="set:cda:open")],
             [InlineKeyboardButton(text=t(lang, "confirm_settings_button"), callback_data="conf:open")],
             [InlineKeyboardButton(text=t(lang, "start_screen_btn"), callback_data="set:start:open")],
             [InlineKeyboardButton(text=t(lang, "settings_calendar_btn"), callback_data="set:cal:open")],

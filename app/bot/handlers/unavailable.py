@@ -9,7 +9,7 @@ from app.bot.utils.callbacks import safe_callback_answer
 from app.bot.utils.telegram_ui import safe_edit_text
 
 from app.bot.i18n import t
-from app.bot.keyboards import ADMIN_UNAVAILABLE_TEXTS, admin_menu, cancel_kb
+from app.bot.keyboards import ADMIN_UNAVAILABLE_TEXTS, cancel_kb
 from app.bot.keyboards.unavailable_kb import (
     unavailable_confirm_kb,
     unavailable_date_picker_kb,
@@ -91,11 +91,12 @@ async def open_unavailable_from_reply(
         return
     if await state.get_state():
         await state.clear()
-    await state.update_data(flow_origin="admin")
-    await show_unavailable_menu(message, lang)
+    from app.bot.handlers.schedule import show_schedule_main
+
+    await show_schedule_main(message, lang)
 
 
-@router.callback_query(F.data == "unav:list")
+@router.callback_query(F.data.in_({"unav:list", "unav:main"}))
 async def unav_list(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
@@ -107,8 +108,9 @@ async def unav_list(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
 async def unav_back_admin(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
-    await callback.message.delete()
-    await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+    from app.bot.handlers.schedule import show_schedule_main
+
+    await show_schedule_main(callback, lang)
     await safe_callback_answer(callback)
 
 

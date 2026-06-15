@@ -11,7 +11,7 @@ def working_hours_main_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     ]
     rows.append([InlineKeyboardButton(text=t(lang, "wh_quick_presets"), callback_data="wh:presets")])
     rows.append([InlineKeyboardButton(text=t(lang, "wh_week_off"), callback_data="wh:week_off")])
-    rows.append([InlineKeyboardButton(text=t(lang, "back_to_admin_panel"), callback_data="wh:back")])
+    rows.append([InlineKeyboardButton(text=t(lang, "wh_back_schedule"), callback_data="sch:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

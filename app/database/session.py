@@ -32,6 +32,23 @@ async def _migrate_sqlite_columns() -> None:
             await conn.exec_driver_sql(
                 f"ALTER TABLE clients ADD COLUMN language VARCHAR(5) DEFAULT '{default_lang}'"
             )
+        client_new_cols = (
+            ("first_name", "VARCHAR(255)"),
+            ("last_name", "VARCHAR(255)"),
+            ("username", "VARCHAR(255)"),
+            ("language_code", "VARCHAR(16)"),
+            ("full_name", "VARCHAR(255)"),
+            ("phone_source", "VARCHAR(32)"),
+            ("phone_updated_at", "DATETIME"),
+            ("last_seen_at", "DATETIME"),
+        )
+        result = await conn.exec_driver_sql("PRAGMA table_info(clients)")
+        client_columns = {row[1] for row in result.fetchall()}
+        for col, col_type in client_new_cols:
+            if col not in client_columns:
+                await conn.exec_driver_sql(f"ALTER TABLE clients ADD COLUMN {col} {col_type}")
+        if "phone" not in client_columns:
+            await conn.exec_driver_sql("ALTER TABLE clients ADD COLUMN phone VARCHAR(50)")
 
         result = await conn.exec_driver_sql("PRAGMA table_info(bookings)")
         booking_columns = {row[1] for row in result.fetchall()}

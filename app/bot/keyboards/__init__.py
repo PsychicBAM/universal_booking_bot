@@ -1,7 +1,6 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from app.bot.i18n import LANG_EN, LANG_RU, all_texts, status_label, t, weekday_name
-from app.bot.utils.attendance_helpers import attendance_list_indicator
 from app.bot.keyboards.service_media_kb import admin_service_detail_media_rows
 from app.bot.keyboards.service_location_kb import admin_service_detail_location_row
 from app.models import Booking, Service
@@ -24,27 +23,22 @@ def main_menu(is_admin: bool = False, lang: str = "ru") -> ReplyKeyboardMarkup:
 
 
 def admin_menu(lang: str = "ru") -> ReplyKeyboardMarkup:
-    bottom_row = [KeyboardButton(text=t(lang, "back_main"))]
-    if is_language_switching_enabled():
-        bottom_row.insert(0, KeyboardButton(text=t(lang, "language")))
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text=t(lang, "admin_services")),
-                KeyboardButton(text=t(lang, "admin_working_hours")),
-            ],
-            [
-                KeyboardButton(text=t(lang, "admin_unavailable")),
-                KeyboardButton(text=t(lang, "admin_bookings")),
-            ],
-            [
-                KeyboardButton(text=t(lang, "admin_calendar")),
-                KeyboardButton(text=t(lang, "admin_settings")),
-            ],
-            bottom_row,
+    rows = [
+        [
+            KeyboardButton(text=t(lang, "admin_services")),
+            KeyboardButton(text=t(lang, "schedule_button")),
         ],
-        resize_keyboard=True,
-    )
+        [
+            KeyboardButton(text=t(lang, "admin_bookings")),
+            KeyboardButton(text=t(lang, "admin_clients_button")),
+        ],
+    ]
+    settings_row = [KeyboardButton(text=t(lang, "admin_settings"))]
+    if is_language_switching_enabled():
+        settings_row.append(KeyboardButton(text=t(lang, "language")))
+    rows.append(settings_row)
+    rows.append([KeyboardButton(text=t(lang, "back_main"))])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
 def cancel_kb(lang: str = "ru") -> ReplyKeyboardMarkup:
@@ -255,43 +249,6 @@ def admin_service_detail_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_bookings_kb(bookings: list[Booking], lang: str = "ru") -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text=t(lang, "admin_attendance_button"), callback_data="adm_att:list:7d:0")]
-    ]
-    for b in bookings[:20]:
-        status = status_label(lang, b.status.value)
-        indicator = attendance_list_indicator(b)
-        buttons.append(
-            [InlineKeyboardButton(
-                text=f"{indicator}#{b.id} {format_time(b.start_at)} [{status}]",
-                callback_data=f"adm_booking:{b.id}",
-            )]
-        )
-    if not buttons:
-        buttons = [[InlineKeyboardButton(text=t(lang, "no_bookings_admin"), callback_data="noop")]]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def admin_booking_detail_kb(booking_id: int, status: str, lang: str = "ru") -> InlineKeyboardMarkup:
-    rows = []
-    if status == "pending":
-        rows.append([InlineKeyboardButton(text=t(lang, "confirm_booking_btn"), callback_data=f"adm_confirm:{booking_id}")])
-    if status in ("pending", "confirmed"):
-        rows.append([InlineKeyboardButton(text=t(lang, "cancel_booking_btn"), callback_data=f"adm_cancel:{booking_id}")])
-        rows.append([InlineKeyboardButton(text=t(lang, "message_client_btn"), callback_data=f"adm_msg:{booking_id}")])
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=t(lang, "admin_attendance_send_question"),
-                    callback_data=f"adm_att:view:{booking_id}:adm",
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton(text=t(lang, "back"), callback_data="adm_bookings:list")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
 def days_kb(lang: str = "ru", prefix: str = "wh_day") -> InlineKeyboardMarkup:
     buttons = [
         [InlineKeyboardButton(text=weekday_name(lang, i, short=True), callback_data=f"{prefix}:{i}")]
@@ -324,6 +281,8 @@ ADMIN_UNAVAILABLE_LEGACY_TEXTS = frozenset(
 )
 ADMIN_UNAVAILABLE_TEXTS = all_texts("admin_unavailable") | ADMIN_UNAVAILABLE_LEGACY_TEXTS
 ADMIN_BOOKINGS_TEXTS = all_texts("admin_bookings")
+ADMIN_CLIENTS_TEXTS = all_texts("admin_clients_button")
+ADMIN_SCHEDULE_TEXTS = all_texts("schedule_button")
 ADMIN_CALENDAR_TEXTS = all_texts("admin_calendar")
 ADMIN_SETTINGS_TEXTS = all_texts("admin_settings")
 SKIP_TEXTS = all_texts("skip")
@@ -336,12 +295,11 @@ _MENU_TEXT_KEYS = (
     "admin_menu",
     "back_main",
     "admin_services",
-    "admin_working_hours",
-    "admin_unavailable",
+    "schedule_button",
     "admin_bookings",
-    "admin_calendar",
+    "admin_clients_button",
     "admin_settings",
 )
 ALL_MENU_TEXTS: frozenset[str] = frozenset(
     text for key in _MENU_TEXT_KEYS for text in all_texts(key)
-) | ADMIN_WH_LEGACY_TEXTS | ADMIN_UNAVAILABLE_LEGACY_TEXTS
+) | ADMIN_WH_TEXTS | ADMIN_UNAVAILABLE_TEXTS | ADMIN_WH_LEGACY_TEXTS | ADMIN_UNAVAILABLE_LEGACY_TEXTS

@@ -14,6 +14,7 @@ from app.bot.states import (
     AdminServiceMediaStates,
     AdminStartScreenStates,
     AdminConfirmationTextStates,
+    AdminClientSearchStates,
     AdminSupportStates,
     AdminUnavailableStates,
     AdminWorkingHoursStates,
@@ -170,6 +171,14 @@ async def global_cancel(message: Message, state: FSMContext, is_admin: bool, lan
         await message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
         return
 
+    if current.startswith("AdminClientSearchStates"):
+        await state.clear()
+        await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
+        from app.bot.handlers.admin_clients import show_clients_main
+
+        await show_clients_main(message, lang)
+        return
+
     destination = await cancel_destination(state, is_admin)
     settings_state = current.startswith("AdminSettingsStates")
     await state.clear()
@@ -271,6 +280,18 @@ async def cancel_flow_callback(callback: CallbackQuery, state: FSMContext, is_ad
         await state.clear()
         await safe_callback_answer(callback, t(lang, "cancelled"))
         await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+        return
+
+    if current.startswith("AdminClientSearchStates"):
+        await state.clear()
+        await safe_callback_answer(callback, t(lang, "cancelled"))
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+        from app.bot.handlers.admin_clients import show_clients_main
+
+        await show_clients_main(callback.message, lang)
         return
 
     destination = await cancel_destination(state, is_admin)

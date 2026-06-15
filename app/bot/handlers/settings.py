@@ -69,6 +69,7 @@ async def open_settings(message: Message, state: FSMContext, is_admin: bool, lan
 @router.callback_query(
     F.data.startswith("set:")
     & ~F.data.startswith("set:start:")
+    & ~F.data.startswith("set:cda:")
     & ~F.data.startswith("conf:")
 )
 async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admin: bool, lang: str) -> None:

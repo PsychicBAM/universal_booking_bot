@@ -140,9 +140,8 @@ class BookingService:
                 )
                 if service.requires_location and not (location_text and location_text.strip()):
                     raise ValueError("Location required")
-                client = await self.client_repo.update_contact(
-                    telegram_id, client_name, client_phone or ""
-                )
+                client = await self.client_repo.ensure_for_booking(telegram_id)
+                await self.client_repo.set_display_name(telegram_id, client_name)
                 status = BookingStatus.CONFIRMED if auto_confirm else BookingStatus.PENDING
                 booking = await self.booking_repo.create(
                     client_id=client.id,

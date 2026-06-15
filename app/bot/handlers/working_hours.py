@@ -8,7 +8,7 @@ from app.bot.utils.callbacks import safe_callback_answer
 from app.bot.utils.telegram_ui import safe_edit_text
 
 from app.bot.i18n import CANCEL_TEXTS, t, weekday_name
-from app.bot.keyboards import ADMIN_WH_TEXTS, admin_menu, cancel_kb
+from app.bot.keyboards import ADMIN_WH_TEXTS, cancel_kb
 from app.bot.keyboards.working_hours_kb import (
     working_hours_day_kb,
     working_hours_main_kb,
@@ -97,7 +97,9 @@ async def open_working_hours_from_reply(
         return
     if await state.get_state():
         await state.clear()
-    await show_working_hours_menu(message, lang)
+    from app.bot.handlers.schedule import show_schedule_main
+
+    await show_schedule_main(message, lang)
 
 
 @router.callback_query(F.data == "wh:list")
@@ -112,8 +114,9 @@ async def wh_list(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
 async def wh_back_admin(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
-    await callback.message.delete()
-    await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+    from app.bot.handlers.schedule import show_schedule_main
+
+    await show_schedule_main(callback, lang)
     await safe_callback_answer(callback)
 
 

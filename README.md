@@ -15,7 +15,7 @@ Clients book appointments in Telegram. Admins manage services, schedule, media, 
 | Area | Capabilities |
 |------|----------------|
 | **Client** | Book appointments, service photo/video cards, fixed locations, client address + comment, my bookings, reschedule/edit, cancel, contact admin via bot, RU/EN |
-| **Admin** | Services CRUD, archive/restore, duration/buffer, media (5 photos + 1 video), service locations, working hours, unavailable dates, bookings, bot settings (custom /start text + photo), reminders |
+| **Admin** | Services CRUD, archive/restore, duration/buffer, media (5 photos + 1 video), service locations, working hours, unavailable dates, bookings, **client archive/history**, bot settings (custom /start text + photo), reminders |
 | **Engine** | Availability (working hours + blocks + bookings + buffer + Google Calendar busy times), SQLite migrations, Docker |
 
 ---
@@ -128,6 +128,27 @@ When `ATTENDANCE_CONFIRMATION_ENABLED=true`, client reminders include **Confirm*
 Set `ATTENDANCE_CONFIRMATION_REMINDER=client_1` (default, ~24h), `client_2` (~2h), or `both`.
 
 Admins can manually send the confirmation question from **📒 Bookings → 🔔 Booking confirmation** (sorted by soonest booking, filters for today / tomorrow / 7 days / no response).
+
+### Client archive / history
+
+From the admin panel, open **👥 Clients** to see who booked before, who is new vs returning, and full per-client history.
+
+- **Filters:** upcoming bookings, visited before, new clients, returning clients, had cancellations, all clients
+- **Search** by name, phone, or Telegram ID
+- **Client detail:** stats (total / upcoming / past / cancelled / cannot attend), future bookings, full history
+- **✉️ Message client** — send a generic Telegram message (booking-specific message from booking detail still works)
+- **🔔 Send confirmation for nearest booking** — reuses the manual booking confirmation flow
+
+### Client data collection (booking)
+
+In **⚙️ Bot settings → 👤 Client data**, admins configure how the bot collects name and phone during booking:
+
+- **Telegram name** — use `first_name` / `last_name` from the user's Telegram profile (no extra typing)
+- **Confirm name** — ask before using the Telegram name, or apply it automatically
+- **Phone** — only collected when the client taps **Share phone number** (`request_contact`) or enters it manually; the bot never reads phone automatically
+- **Phone required / optional** — allow skipping phone when optional
+
+Profile fields (`username`, `language_code`, `last_seen_at`, phone source) are stored in the local SQLite database. Do not commit `.env` or database files.
 
 ### Custom booking confirmation texts
 

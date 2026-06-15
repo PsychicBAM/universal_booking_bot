@@ -25,6 +25,14 @@ class ClientRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    @staticmethod
+    def build_full_name(first_name: str | None, last_name: str | None) -> str | None:
+        parts = [p for p in (first_name, last_name) if p]
+        if not parts:
+            return None
+        full = " ".join(parts).strip()
+        return full[:100] if full else None
+
     async def get_by_telegram_id(self, telegram_id: int) -> Client | None:
         result = await self.session.execute(select(Client).where(Client.telegram_id == telegram_id))
         return result.scalar_one_or_none()
@@ -59,9 +67,61 @@ class ClientRepository:
     async def update_contact(self, telegram_id: int, name: str, phone: str) -> Client:
         client = await self.get_or_create(telegram_id)
         client.name = name
-        client.phone = phone
+        client.full_name = name
+        if phone:
+            client.phone = phone
+            client.phone_source = client.phone_source or "imported"
+            client.phone_updated_at = datetime.now(timezone.utc)
         await self.session.flush()
         return client
+
+    async def sync_telegram_profile(self, user) -> Client | None:
+        if user is None:
+            return None
+        client = await self.get_or_create(user.id)
+        client.first_name = user.first_name
+        client.last_name = user.last_name
+        client.username = user.username
+        client.language_code = user.language_code
+        full_name = self.build_full_name(user.first_name, user.last_name)
+        if full_name:
+            client.full_name = full_name
+            if not client.name:
+                client.name = full_name
+        elif user.first_name and not client.name:
+            client.name = user.first_name
+        client.last_seen_at = datetime.now(timezone.utc)
+        await self.session.flush()
+        return client
+
+    async def set_display_name(self, telegram_id: int, name: str) -> Client:
+        client = await self.get_or_create(telegram_id)
+        stripped = name.strip()
+        client.name = stripped
+        client.full_name = stripped
+        await self.session.flush()
+        return client
+
+    async def set_phone(self, telegram_id: int, phone: str, *, source: str) -> Client:
+        client = await self.get_or_create(telegram_id)
+        client.phone = phone.strip()
+        client.phone_source = source
+        client.phone_updated_at = datetime.now(timezone.utc)
+        await self.session.flush()
+        return client
+
+    async def ensure_for_booking(self, telegram_id: int) -> Client:
+        return await self.get_or_create(telegram_id)
+
+    async def get_by_id(self, client_id: int) -> Client | None:
+        result = await self.session.execute(select(Client).where(Client.id == client_id))
+        return result.scalar_one_or_none()
+
+    async def list_by_ids(self, client_ids: list[int]) -> list[Client]:
+        if not client_ids:
+            return []
+        result = await self.session.execute(select(Client).where(Client.id.in_(client_ids)))
+        return list(result.scalars().all())
 
 
 class ServiceRepository:
@@ -367,6 +427,41 @@ class BookingRepository:
         )
         return list(result.scalars().all())
 
+    async def get_latest_for_client(self, client_id: int) -> Booking | None:
+        result = await self.session.execute(
+            select(Booking)
+            .where(Booking.client_id == client_id)
+            .where(Booking.status != BookingStatus.CANCELLED)
+            .order_by(Booking.start_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_all_for_client(self, client_id: int) -> list[Booking]:
+        result = await self.session.execute(
+            select(Booking)
+            .where(Booking.client_id == client_id)
+            .order_by(Booking.start_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def list_distinct_client_ids(self) -> list[int]:
+        result = await self.session.execute(select(Booking.client_id).distinct())
+        return list(result.scalars().all())
+
+    async def list_all_grouped_by_client(self, client_ids: list[int]) -> dict[int, list[Booking]]:
+        if not client_ids:
+            return {}
+        result = await self.session.execute(
+            select(Booking)
+            .where(Booking.client_id.in_(client_ids))
+            .order_by(Booking.start_at)
+        )
+        grouped: dict[int, list[Booking]] = {client_id: [] for client_id in client_ids}
+        for booking in result.scalars().all():
+            grouped.setdefault(booking.client_id, []).append(booking)
+        return grouped
+
     async def list_active_between(self, start: datetime, end: datetime) -> list[Booking]:
         result = await self.session.execute(
             select(Booking)
@@ -443,6 +538,10 @@ class BookingRepository:
             if booking.service_id == service_id and slots_match(booking.start_at, start_at):
                 return booking
         return None
+
+    async def list_all_bookings(self) -> list[Booking]:
+        result = await self.session.execute(select(Booking).order_by(Booking.start_at))
+        return list(result.scalars().all())
 
     async def list_upcoming(self, limit: int = 50) -> list[Booking]:
         now = now_local()

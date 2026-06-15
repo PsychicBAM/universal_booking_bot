@@ -10,9 +10,9 @@ from app.bot.utils.attendance_helpers import (
     ATTENDANCE_CANNOT_ATTEND,
     ATTENDANCE_CONFIRMED,
     ATTENDANCE_REASON_PROVIDED,
-    attendance_admin_label_indicator,
     has_attendance_response,
 )
+from app.bot.utils.booking_labels import format_admin_booking_button
 from app.models import Booking, Client
 from app.repositories import BookingRepository
 from app.services.confirmation_text_service import (
@@ -102,12 +102,7 @@ def build_attendance_list_body(bookings: list[Booking], lang: str, filter_key: s
             continue
         lines.append(section_titles[key])
         for booking in items:
-            start = to_local_naive(booking.start_at)
-            label = (
-                f"{attendance_admin_label_indicator(booking)} "
-                f"#{booking.id} {start.strftime('%d.%m')} {start.strftime('%H:%M')} — {booking.client_name}"
-            )
-            lines.append(label)
+            lines.append(format_admin_booking_button(booking, lang))
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -130,7 +125,7 @@ def format_admin_attendance_detail(
     lines = [
         t(lang, "admin_attendance_title"),
         "",
-        t(lang, "admin_attendance_booking_line", booking_id=str(booking.id)),
+        t(lang, "booking_id_label", id=str(booking.id)),
         t(lang, "admin_attendance_client_line", client_name=booking.client_name),
         t(lang, "admin_attendance_phone_line", phone=booking.client_phone or t(lang, "phone_not_provided")),
         t(lang, "admin_attendance_service_line", service=service_name),

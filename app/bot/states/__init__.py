@@ -6,7 +6,10 @@ class BookingStates(StatesGroup):
     choosing_service_location = State()
     choosing_date = State()
     choosing_time = State()
+    confirming_telegram_name = State()
     entering_name = State()
+    choosing_phone_method = State()
+    entering_phone_manual = State()
     entering_phone = State()
     entering_location = State()
     entering_comment = State()
@@ -58,6 +61,10 @@ class AdminUnavailableStates(StatesGroup):
 
 class AdminMessageStates(StatesGroup):
     entering_message = State()
+
+
+class AdminClientSearchStates(StatesGroup):
+    entering_query = State()
 
 
 class AdminSettingsStates(StatesGroup):

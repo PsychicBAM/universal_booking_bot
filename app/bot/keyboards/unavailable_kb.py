@@ -20,7 +20,7 @@ def unavailable_main_kb(lang: str = "ru") -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=t(lang, "unav_block_day"), callback_data="unav:day")],
             [InlineKeyboardButton(text=t(lang, "unav_block_time"), callback_data="unav:time")],
             [InlineKeyboardButton(text=t(lang, "unav_list"), callback_data="unav:items")],
-            [InlineKeyboardButton(text=t(lang, "back_to_admin_panel"), callback_data="unav:back")],
+            [InlineKeyboardButton(text=t(lang, "wh_back_schedule"), callback_data="sch:main")],
         ]
     )
 
@@ -85,7 +85,7 @@ def unavailable_items_kb(items: list[UnavailableItem], lang: str = "ru") -> Inli
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text=t(lang, "back"), callback_data="unav:list")])
+    rows.append([InlineKeyboardButton(text=t(lang, "back"), callback_data="unav:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

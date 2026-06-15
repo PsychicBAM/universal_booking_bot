@@ -40,7 +40,8 @@ class LanguageMiddleware(BaseMiddleware):
             enabled = await refresh_enabled_languages_cache(session)
             default_lang = await get_effective_default_language(session)
             if user:
-                client = await ClientRepository(session).get_by_telegram_id(user.id)
+                client = await ClientRepository(session).sync_telegram_profile(user)
+                await session.commit()
                 if client and client.language:
                     user_lang = client.language
 

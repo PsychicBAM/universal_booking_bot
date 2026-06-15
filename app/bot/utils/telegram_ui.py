@@ -54,14 +54,20 @@ async def safe_edit_caption(
         raise
 
 
-async def edit_or_send(callback: CallbackQuery, text: str, reply_markup=None) -> None:
+async def edit_or_send(
+    callback: CallbackQuery,
+    text: str,
+    reply_markup=None,
+    *,
+    parse_mode: str | None = None,
+) -> None:
     """Edit callback message or send a new one (needed after photo/video cards)."""
     try:
-        await safe_edit_text(callback.message, text, reply_markup=reply_markup)
+        await safe_edit_text(callback.message, text, reply_markup=reply_markup, parse_mode=parse_mode)
         return
     except TelegramBadRequest:
         try:
             await callback.message.delete()
         except TelegramBadRequest:
             pass
-        await callback.message.answer(text, reply_markup=reply_markup)
+        await callback.message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)

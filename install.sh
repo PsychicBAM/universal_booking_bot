@@ -43,7 +43,7 @@ if [ ! -f .env ]; then
   echo "Created .env from .env.example"
   echo "IMPORTANT: Edit $INSTALL_DIR/.env before production use:"
   echo "  - BOT_TOKEN"
-  echo "  - ADMIN_IDS"
+  echo "  - ADMIN_IDS (comma-separated Telegram user IDs, e.g. 123456789,987654321)"
   echo "  - Optional Google Calendar credentials"
   echo ""
 fi

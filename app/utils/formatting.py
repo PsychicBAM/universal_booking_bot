@@ -103,15 +103,20 @@ def format_booking(
     *,
     admin_view: bool = False,
     show_location_comment: bool = False,
+    client_username: str | None = None,
 ) -> str:
     service_name = escape(service.name) if service else f"Service #{booking.service_id}"
     status = status_label(lang, booking.status.value)
     lines = [
         f"📋 <b>{service_name}</b>",
+        t(lang, "booking_id_label", id=str(booking.id)),
         f"📅 {format_datetime(booking.start_at)}",
         f"👤 {escape(booking.client_name)}",
-        f"📞 {escape(booking.client_phone or '—')}",
+        f"📞 {escape(booking.client_phone or t(lang, 'booking_phone_not_provided'))}",
     ]
+    if admin_view:
+        tg = f"@{client_username}" if client_username else t(lang, "not_provided")
+        lines.insert(3, t(lang, "admin_booking_telegram_line", username=tg))
     lines.extend(_service_location_lines(booking, lang))
     if show_location_comment or admin_view:
         lines.extend(_location_comment_lines(booking, service, lang, admin_view=admin_view))

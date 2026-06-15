@@ -9,10 +9,14 @@ from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.bot.handlers import admin, attendance, booking_edit, cancel, client, common, service_locations, service_media, start, support
+from app.bot.handlers import admin_bookings
 from app.bot.handlers import admin_attendance
+from app.bot.handlers import admin_clients
+from app.bot.handlers import client_data_settings
 from app.bot.handlers import settings as settings_handlers
 from app.bot.handlers import confirmation_settings
 from app.bot.handlers import start_screen_settings
+from app.bot.handlers import schedule
 from app.bot.handlers import unavailable
 from app.bot.handlers import working_hours
 from app.bot.middlewares import AdminMiddleware, LanguageMiddleware
@@ -87,12 +91,16 @@ async def main() -> None:
 
     dp.include_router(cancel.router)
     dp.include_router(attendance.router)
+    dp.include_router(admin_bookings.router)
     dp.include_router(admin_attendance.router)
+    dp.include_router(admin_clients.router)
+    dp.include_router(schedule.router)
     dp.include_router(start.router)
     dp.include_router(working_hours.router)
     dp.include_router(unavailable.router)
     dp.include_router(start_screen_settings.router)
     dp.include_router(confirmation_settings.router)
+    dp.include_router(client_data_settings.router)
     dp.include_router(settings_handlers.router)
     dp.include_router(service_media.router)
     dp.include_router(service_locations.router)

@@ -22,6 +22,8 @@ Clients book appointments in Telegram. Admins manage services, schedule, media, 
 
 ## One-command install (Linux server)
 
+Use of this installer is allowed only for authorized deployments.
+
 Requires **Docker**, **Docker Compose**, and **git**:
 
 ```bash
@@ -347,3 +349,11 @@ Details: [DEPLOYMENT.md](DEPLOYMENT.md)
 - Pagination: 14 dates, 20 bookings per screen
 
 See [NOTES.md](NOTES.md) for implementation details.
+
+---
+
+## License
+
+All rights reserved.
+
+This project is proprietary. You may not copy, modify, distribute, sell, or use this software without prior written permission from the copyright holder. See the [LICENSE](LICENSE) file for details.

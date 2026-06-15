@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.utils.datetime_utils import now_local
+from app.utils.datetime_utils import now_local, to_local_naive
 from app.models import (
     Booking,
     BookingStatus,
@@ -455,13 +455,32 @@ class BookingRepository:
         )
         return list(result.scalars().all())
 
-    async def list_for_reminders(self, now: datetime) -> list[Booking]:
+    async def list_upcoming_active(self, *, limit: int = 500) -> list[Booking]:
+        """All future pending/confirmed bookings, soonest first."""
+        now = now_local()
         result = await self.session.execute(
             select(Booking)
-            .where(Booking.status == BookingStatus.CONFIRMED)
-            .where(Booking.start_at > now)
+            .where(Booking.status.in_([BookingStatus.PENDING, BookingStatus.CONFIRMED]))
+            .where(Booking.start_at >= now)
+            .order_by(Booking.start_at)
+            .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def list_for_reminders(self, now: datetime | None = None) -> list[Booking]:
+        """Future pending/confirmed bookings (local-naive comparison)."""
+        now = now or now_local()
+        result = await self.session.execute(
+            select(Booking).where(
+                Booking.status.in_([BookingStatus.PENDING, BookingStatus.CONFIRMED])
+            )
+        )
+        future: list[Booking] = []
+        for booking in result.scalars().all():
+            if to_local_naive(booking.start_at) > now:
+                future.append(booking)
+        future.sort(key=lambda b: to_local_naive(b.start_at))
+        return future
 
     async def create(
         self,

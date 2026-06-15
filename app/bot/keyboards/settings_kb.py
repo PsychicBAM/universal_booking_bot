@@ -25,6 +25,7 @@ def settings_main_kb(snapshot: BotSettingsSnapshot, lang: str) -> InlineKeyboard
     rows.extend(
         [
             [InlineKeyboardButton(text=t(lang, "settings_contact_btn"), callback_data="set:contact:open")],
+            [InlineKeyboardButton(text=t(lang, "confirm_settings_button"), callback_data="conf:open")],
             [InlineKeyboardButton(text=t(lang, "start_screen_btn"), callback_data="set:start:open")],
             [InlineKeyboardButton(text=t(lang, "settings_calendar_btn"), callback_data="set:cal:open")],
             [InlineKeyboardButton(text=t(lang, "settings_advanced_btn"), callback_data="set:adv:open")],
@@ -127,6 +128,12 @@ def settings_test_kb(snapshot: BotSettingsSnapshot, lang: str) -> InlineKeyboard
             [InlineKeyboardButton(text=test_toggle, callback_data="set:rm:test:toggle")],
             [InlineKeyboardButton(text=t(lang, "settings_test_client_section"), callback_data="set:rm:test:cl:menu")],
             [InlineKeyboardButton(text=t(lang, "settings_test_admin_section"), callback_data="set:rm:test:ad:menu")],
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "settings_test_send_nearest_btn"),
+                    callback_data="set:rm:test:send_now",
+                )
+            ],
             [InlineKeyboardButton(text=t(lang, "settings_back_reminders_btn"), callback_data="set:rm:open")],
         ]
     )

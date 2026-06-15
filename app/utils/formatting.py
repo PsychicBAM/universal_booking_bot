@@ -115,6 +115,18 @@ def format_booking(
     lines.extend(_service_location_lines(booking, lang))
     if show_location_comment or admin_view:
         lines.extend(_location_comment_lines(booking, service, lang, admin_view=admin_view))
+    from app.services.attendance_service import (
+        format_attendance_admin_line,
+        format_attendance_client_line,
+    )
+
+    attendance_line = (
+        format_attendance_admin_line(booking, lang)
+        if admin_view
+        else format_attendance_client_line(booking, lang)
+    )
+    if attendance_line:
+        lines.append(attendance_line)
     lines.append(t(lang, "booking_status_line", status=status))
     return "\n".join(lines)
 
@@ -149,6 +161,11 @@ def format_client_booking_detail(booking: Booking, service: Service, lang: str =
             else t(lang, "comment_not_provided")
         )
         lines.append(f"{t(lang, 'my_booking_comment')}: {comment}")
+    from app.services.attendance_service import format_attendance_client_line
+
+    attendance_line = format_attendance_client_line(booking, lang)
+    if attendance_line:
+        lines.append(attendance_line)
     lines.append(t(lang, "booking_status_line", status=status))
     return "\n".join(lines)
 

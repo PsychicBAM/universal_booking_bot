@@ -73,6 +73,10 @@ class AdminStartScreenStates(StatesGroup):
     uploading_photo_en = State()
 
 
+class AdminConfirmationTextStates(StatesGroup):
+    entering_value = State()
+
+
 class ClientSupportStates(StatesGroup):
     choosing_booking = State()
     entering_message = State()
@@ -80,3 +84,7 @@ class ClientSupportStates(StatesGroup):
 
 class AdminSupportStates(StatesGroup):
     entering_reply = State()
+
+
+class AttendanceStates(StatesGroup):
+    entering_reason = State()

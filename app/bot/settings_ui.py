@@ -1,6 +1,7 @@
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.i18n import format_duration, t
+from app.bot.utils.telegram_ui import safe_edit_text
 from app.bot.keyboards.settings_kb import (
     reminder_admin_presets_kb,
     reminder_client1_presets_kb,
@@ -16,12 +17,21 @@ from app.bot.keyboards.settings_kb import (
     test_admin_presets_kb,
     test_client_presets_kb,
 )
+from app.bot.keyboards.confirmation_settings_kb import (
+    confirmation_language_select_kb,
+    confirmation_main_text_kb,
+    confirmation_responses_kb,
+    confirmation_reset_confirm_kb,
+    confirmation_settings_main_kb,
+    lang_codes,
+)
 from app.bot.keyboards.start_screen_kb import start_screen_menu_kb
 from app.config import get_settings
 from app.database.session import async_session_factory
 from app.repositories import SettingsRepository
 from app.services.bot_settings_service import BotSettingsSnapshot, load_bot_settings_snapshot
 from app.services.language_service import enabled_languages_mode_label, parse_enabled_languages_value
+from app.services.confirmation_text_service import ConfirmationTextConfig, load_confirmation_text_config, resolve_confirmation_text
 from app.services.start_screen_service import (
     StartScreenConfig,
     format_photo_status_line,
@@ -105,7 +115,8 @@ async def send_settings_main_after_cancel(message: Message, lang: str, telegram_
 
 async def edit_to_settings_main(callback: CallbackQuery, lang: str) -> None:
     snapshot = await get_snapshot(callback.from_user.id)
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         f"{t(lang, 'settings_menu_title')}\n\n{format_settings_main_text(snapshot, lang)}",
         reply_markup=settings_main_kb(snapshot, lang),
     )
@@ -113,7 +124,8 @@ async def edit_to_settings_main(callback: CallbackQuery, lang: str) -> None:
 
 async def edit_to_reminders(callback: CallbackQuery, lang: str) -> None:
     snapshot = await get_snapshot(callback.from_user.id)
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         f"{t(lang, 'settings_reminders_title')}\n\n{format_reminders_text(snapshot, lang)}",
         reply_markup=settings_reminders_kb(snapshot, lang),
     )
@@ -121,7 +133,8 @@ async def edit_to_reminders(callback: CallbackQuery, lang: str) -> None:
 
 async def edit_to_test_mode(callback: CallbackQuery, lang: str) -> None:
     snapshot = await get_snapshot(callback.from_user.id)
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         f"{t(lang, 'settings_test_title')}\n\n{format_test_mode_text(snapshot, lang)}",
         reply_markup=settings_test_kb(snapshot, lang),
     )
@@ -129,7 +142,8 @@ async def edit_to_test_mode(callback: CallbackQuery, lang: str) -> None:
 
 async def edit_to_contact(callback: CallbackQuery, lang: str) -> None:
     snapshot = await get_snapshot(callback.from_user.id)
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         f"{t(lang, 'settings_contact_title')}\n\n{format_contact_text(snapshot, lang)}",
         reply_markup=settings_contact_kb(lang),
     )
@@ -137,7 +151,8 @@ async def edit_to_contact(callback: CallbackQuery, lang: str) -> None:
 
 async def edit_to_language(callback: CallbackQuery, lang: str) -> None:
     snapshot = await get_snapshot(callback.from_user.id)
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         t(lang, "settings_language_title"),
         reply_markup=settings_language_kb(lang, snapshot.enabled_languages),
     )
@@ -145,7 +160,8 @@ async def edit_to_language(callback: CallbackQuery, lang: str) -> None:
 
 async def edit_to_enabled_languages(callback: CallbackQuery, lang: str) -> None:
     snapshot = await get_snapshot(callback.from_user.id)
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         f"{t(lang, 'settings_enabled_languages_title')}\n\n"
         f"{t(lang, 'settings_enabled_languages_body', current=enabled_languages_mode_label(lang, snapshot.enabled_languages))}",
         reply_markup=settings_enabled_languages_kb(lang),
@@ -153,7 +169,8 @@ async def edit_to_enabled_languages(callback: CallbackQuery, lang: str) -> None:
 
 
 async def edit_to_advanced(callback: CallbackQuery, lang: str) -> None:
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         f"{t(lang, 'settings_advanced_title')}\n\n{t(lang, 'settings_advanced_body')}",
         reply_markup=settings_advanced_kb(lang),
     )
@@ -186,7 +203,8 @@ def format_calendar_text(lang: str, env_on: bool, db_on: bool, calendar_id: str)
 async def edit_to_calendar(callback: CallbackQuery, lang: str) -> None:
     async with async_session_factory() as session:
         env_on, db_on, calendar_id = await _calendar_state(session)
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         f"{t(lang, 'settings_calendar_title')}\n\n{format_calendar_text(lang, env_on, db_on, calendar_id)}",
         reply_markup=settings_calendar_kb(lang, env_on, db_on),
     )
@@ -245,8 +263,195 @@ async def edit_to_start_screen(callback: CallbackQuery, lang: str) -> None:
     async with async_session_factory() as session:
         config = await load_start_screen_config(session)
         snapshot = await load_bot_settings_snapshot(session, callback.from_user.id)
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         f"{t(lang, 'start_screen_menu_title')}\n\n{format_start_screen_text(config, lang, snapshot.enabled_languages)}",
         reply_markup=start_screen_menu_kb(config, lang, snapshot.enabled_languages),
     )
+
+
+def shorten_text(value: str, max_len: int) -> str:
+    text = (value or "").strip()
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1] + "…"
+
+
+def _confirm_lang_label(admin_lang: str, target_lang: str) -> str:
+    return t(admin_lang, "confirm_lang_name_ru" if target_lang == "ru" else "confirm_lang_name_en")
+
+
+def format_confirmation_language_select_text(admin_lang: str) -> str:
+    return f"{t(admin_lang, 'confirm_settings_title')}\n\n{t(admin_lang, 'confirm_select_language')}"
+
+
+def format_confirmation_language_menu_text(
+    config: ConfirmationTextConfig,
+    target_lang: str,
+    admin_lang: str,
+    *,
+    multi_lang: bool,
+) -> str:
+    title = (
+        t(admin_lang, "confirm_settings_title_lang", target_lang=_confirm_lang_label(admin_lang, target_lang))
+        if multi_lang
+        else t(admin_lang, "confirm_settings_title")
+    )
+    lines = [
+        title,
+        "",
+        t(admin_lang, "confirm_settings_intro"),
+        "",
+        t(admin_lang, "confirm_current_texts"),
+        t(
+            admin_lang,
+            "confirm_current_title",
+            value=shorten_text(resolve_confirmation_text(config, target_lang, "title"), 80),
+        ),
+        t(
+            admin_lang,
+            "confirm_current_question",
+            value=shorten_text(resolve_confirmation_text(config, target_lang, "question"), 120),
+        ),
+        t(
+            admin_lang,
+            "confirm_button_confirm",
+            value=resolve_confirmation_text(config, target_lang, "yes_button"),
+        ),
+        t(
+            admin_lang,
+            "confirm_button_change",
+            value=resolve_confirmation_text(config, target_lang, "no_button"),
+        ),
+    ]
+    return "\n".join(lines)
+
+
+def format_confirmation_group_main_text(admin_lang: str, target_lang: str, multi_lang: bool) -> str:
+    title = (
+        t(admin_lang, "confirm_settings_title_lang", target_lang=_confirm_lang_label(admin_lang, target_lang))
+        if multi_lang
+        else t(admin_lang, "confirm_settings_title")
+    )
+    return f"{title}\n\n{t(admin_lang, 'confirm_group_main_text')}"
+
+
+def format_confirmation_group_responses_text(admin_lang: str, target_lang: str, multi_lang: bool) -> str:
+    title = (
+        t(admin_lang, "confirm_settings_title_lang", target_lang=_confirm_lang_label(admin_lang, target_lang))
+        if multi_lang
+        else t(admin_lang, "confirm_settings_title")
+    )
+    return f"{title}\n\n{t(admin_lang, 'confirm_group_responses')}"
+
+
+def format_confirmation_reset_confirm_text(admin_lang: str, target_lang: str) -> str:
+    return t(admin_lang, "confirm_reset_confirm_text", target_lang=_confirm_lang_label(admin_lang, target_lang))
+
+
+async def _load_confirmation_context(telegram_id: int) -> tuple[ConfirmationTextConfig, list[str]]:
+    async with async_session_factory() as session:
+        config = await load_confirmation_text_config(session)
+        snapshot = await load_bot_settings_snapshot(session, telegram_id)
+    return config, lang_codes(snapshot.enabled_languages)
+
+
+async def send_confirmation_language_select(message: Message, admin_lang: str) -> None:
+    await message.answer(
+        format_confirmation_language_select_text(admin_lang),
+        reply_markup=confirmation_language_select_kb(admin_lang),
+    )
+
+
+async def send_confirmation_language_menu(
+    message: Message,
+    admin_lang: str,
+    target_lang: str,
+    *,
+    multi_lang: bool,
+) -> None:
+    config, _codes = await _load_confirmation_context(message.from_user.id)
+    await message.answer(
+        format_confirmation_language_menu_text(config, target_lang, admin_lang, multi_lang=multi_lang),
+        reply_markup=confirmation_settings_main_kb(admin_lang, target_lang, multi_lang=multi_lang),
+    )
+
+
+async def send_confirmation_settings_menu(message: Message, admin_lang: str) -> None:
+    _config, codes = await _load_confirmation_context(message.from_user.id)
+    if len(codes) == 1:
+        await send_confirmation_language_menu(message, admin_lang, codes[0], multi_lang=False)
+    else:
+        await send_confirmation_language_select(message, admin_lang)
+
+
+async def edit_confirmation_language_select(callback: CallbackQuery, admin_lang: str) -> None:
+    await safe_edit_text(
+        callback.message,
+        format_confirmation_language_select_text(admin_lang),
+        reply_markup=confirmation_language_select_kb(admin_lang),
+    )
+
+
+async def edit_confirmation_language_menu(
+    callback: CallbackQuery,
+    admin_lang: str,
+    target_lang: str,
+    *,
+    multi_lang: bool,
+) -> None:
+    config, _codes = await _load_confirmation_context(callback.from_user.id)
+    await safe_edit_text(
+        callback.message,
+        format_confirmation_language_menu_text(config, target_lang, admin_lang, multi_lang=multi_lang),
+        reply_markup=confirmation_settings_main_kb(admin_lang, target_lang, multi_lang=multi_lang),
+    )
+
+
+async def edit_confirmation_group_main(
+    callback: CallbackQuery,
+    admin_lang: str,
+    target_lang: str,
+) -> None:
+    _config, codes = await _load_confirmation_context(callback.from_user.id)
+    await safe_edit_text(
+        callback.message,
+        format_confirmation_group_main_text(admin_lang, target_lang, multi_lang=len(codes) > 1),
+        reply_markup=confirmation_main_text_kb(target_lang, admin_lang),
+    )
+
+
+async def edit_confirmation_group_responses(
+    callback: CallbackQuery,
+    admin_lang: str,
+    target_lang: str,
+) -> None:
+    _config, codes = await _load_confirmation_context(callback.from_user.id)
+    await safe_edit_text(
+        callback.message,
+        format_confirmation_group_responses_text(admin_lang, target_lang, multi_lang=len(codes) > 1),
+        reply_markup=confirmation_responses_kb(target_lang, admin_lang),
+    )
+
+
+async def edit_confirmation_reset_confirm(
+    callback: CallbackQuery,
+    admin_lang: str,
+    target_lang: str,
+) -> None:
+    await safe_edit_text(
+        callback.message,
+        format_confirmation_reset_confirm_text(admin_lang, target_lang),
+        reply_markup=confirmation_reset_confirm_kb(target_lang, admin_lang),
+    )
+
+
+async def edit_to_confirmation_settings(callback: CallbackQuery, admin_lang: str) -> None:
+    async with async_session_factory() as session:
+        snapshot = await load_bot_settings_snapshot(session, callback.from_user.id)
+    codes = lang_codes(snapshot.enabled_languages)
+    if len(codes) == 1:
+        await edit_confirmation_language_menu(callback, admin_lang, codes[0], multi_lang=False)
+    else:
+        await edit_confirmation_language_select(callback, admin_lang)
 

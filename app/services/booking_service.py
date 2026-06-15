@@ -244,6 +244,10 @@ class BookingService:
         booking.client_reminder_1_sent_at = None
         booking.client_reminder_2_sent_at = None
         booking.admin_reminder_sent_at = None
+        booking.attendance_status = None
+        booking.attendance_responded_at = None
+        booking.attendance_reason = None
+        booking.attendance_reminder_type = None
 
     @staticmethod
     def _event_location(booking: Booking) -> str | None:

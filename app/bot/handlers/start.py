@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.utils.callbacks import safe_callback_answer
+from app.bot.utils.telegram_ui import safe_edit_text
 
 from app.bot.i18n import t
 from app.bot.keyboards import (
@@ -83,6 +84,6 @@ async def set_language(
     async with async_session_factory() as session:
         await ClientRepository(session).set_language(callback.from_user.id, new_lang)
         await session.commit()
-    await callback.message.edit_text(t(new_lang, "language_set"))
+    await safe_edit_text(callback.message, t(new_lang, "language_set"))
     await callback.message.answer(t(new_lang, "main_menu"), reply_markup=main_menu(is_admin, new_lang))
     await safe_callback_answer(callback)

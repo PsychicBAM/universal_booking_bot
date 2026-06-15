@@ -18,6 +18,7 @@ from app.bot.keyboards.support_kb import (
 )
 from app.bot.states import AdminSupportStates, ClientSupportStates
 from app.bot.utils.callbacks import safe_callback_answer
+from app.bot.utils.telegram_ui import safe_edit_text
 from app.config import get_settings
 from app.database.session import async_session_factory
 from app.models import SupportMessageStatus
@@ -52,7 +53,7 @@ async def _edit_or_answer(
         await safe_callback_answer(target)
         if edit:
             try:
-                await target.message.edit_text(text, reply_markup=reply_markup)
+                await safe_edit_text(target.message, text, reply_markup=reply_markup)
                 return
             except TelegramBadRequest:
                 pass

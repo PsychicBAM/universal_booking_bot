@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.utils.callbacks import safe_callback_answer
+from app.bot.utils.telegram_ui import safe_edit_text
 
 from app.bot.i18n import t
 from app.bot.keyboards import ADMIN_UNAVAILABLE_TEXTS, admin_menu, cancel_kb
@@ -59,7 +60,7 @@ async def show_unavailable_menu(event: Message | CallbackQuery, lang: str) -> No
     text = _main_text(lang)
     keyboard = unavailable_main_kb(lang)
     if isinstance(event, CallbackQuery):
-        await event.message.edit_text(text, reply_markup=keyboard)
+        await safe_edit_text(event.message,text, reply_markup=keyboard)
     else:
         await event.answer(text, reply_markup=keyboard)
 
@@ -76,7 +77,7 @@ async def _show_items_list(callback: CallbackQuery, lang: str) -> None:
         text = "\n".join(lines)
     else:
         text = f"{t(lang, 'unav_items_title')}\n\n{t(lang, 'unav_items_empty')}"
-    await callback.message.edit_text(text, reply_markup=unavailable_items_kb(items, lang))
+    await safe_edit_text(callback.message,text, reply_markup=unavailable_items_kb(items, lang))
 
 
 @router.message(F.text.in_(ADMIN_UNAVAILABLE_TEXTS))
@@ -115,7 +116,7 @@ async def unav_back_admin(callback: CallbackQuery, is_admin: bool, lang: str) ->
 async def unav_tomorrow_confirm(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         t(lang, "unav_tomorrow_confirm_text"),
         reply_markup=unavailable_confirm_kb(
             "unav:tomorrow_confirm", "unav:list", lang, yes_key="unav_tomorrow_confirm_yes"
@@ -139,7 +140,7 @@ async def unav_tomorrow_apply(callback: CallbackQuery, is_admin: bool, lang: str
 async def unav_next7_confirm(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         t(lang, "unav_next7_confirm_text"),
         reply_markup=unavailable_confirm_kb(
             "unav:next7_confirm", "unav:list", lang, yes_key="unav_next7_confirm_yes"
@@ -164,7 +165,7 @@ async def unav_block_day_picker(callback: CallbackQuery, state: FSMContext, is_a
     if not is_admin:
         return
     await state.update_data(unav_flow="day", flow_origin="admin")
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         t(lang, "unav_block_day"),
         reply_markup=unavailable_date_picker_kb("unav:list", lang),
     )
@@ -176,7 +177,7 @@ async def unav_block_time_picker(callback: CallbackQuery, state: FSMContext, is_
     if not is_admin:
         return
     await state.update_data(unav_flow="time", flow_origin="admin")
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         t(lang, "unav_block_time"),
         reply_markup=unavailable_date_picker_kb("unav:list", lang),
     )
@@ -193,12 +194,12 @@ async def unav_date_offset(callback: CallbackQuery, state: FSMContext, is_admin:
     flow = data.get("unav_flow", "day")
     if flow == "time":
         await state.update_data(unav_target_date=target.isoformat())
-        await callback.message.edit_text(
+        await safe_edit_text(callback.message,
             t(lang, "unav_block_time") + f"\n{format_date(target)}",
             reply_markup=unavailable_time_presets_kb(target, lang),
         )
     else:
-        await callback.message.edit_text(
+        await safe_edit_text(callback.message,
             t(lang, "unav_day_confirm_text", date=format_date(target)),
             reply_markup=unavailable_confirm_kb(
                 f"unav:day:confirm:{target.isoformat()}",
@@ -325,7 +326,7 @@ async def unav_delete_confirm(callback: CallbackQuery, is_admin: bool, lang: str
         await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
         return
     text = f"{t(lang, 'unav_delete_confirm_text')}\n\n{_format_item_line(item, lang)}"
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         text,
         reply_markup=unavailable_delete_confirm_kb(kind, item.id, lang),
     )

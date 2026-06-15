@@ -5,6 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.utils.callbacks import safe_callback_answer
+from app.bot.utils.telegram_ui import safe_edit_text
 
 from app.bot.i18n import t
 from app.bot.keyboards import SKIP_TEXTS, cancel_kb, skip_cancel_kb
@@ -55,7 +56,7 @@ async def show_locations_list(event: Message | CallbackQuery, service_id: int, l
     text = _locations_list_text(lang, len(locations))
     keyboard = locations_list_kb(service_id, locations, lang)
     if isinstance(event, CallbackQuery):
-        await event.message.edit_text(text, reply_markup=keyboard)
+        await safe_edit_text(event.message,text, reply_markup=keyboard)
         await safe_callback_answer(event)
     else:
         await event.answer(text, reply_markup=keyboard)
@@ -73,7 +74,7 @@ async def show_location_detail(event: Message | CallbackQuery, location_id: int,
     text = _location_detail_text(lang, location)
     keyboard = location_detail_kb(location.id, location.service_id, location.is_active, lang)
     if isinstance(event, CallbackQuery):
-        await event.message.edit_text(text, reply_markup=keyboard)
+        await safe_edit_text(event.message,text, reply_markup=keyboard)
         await safe_callback_answer(event)
     else:
         await event.answer(text, reply_markup=keyboard)
@@ -110,7 +111,7 @@ async def locations_back_to_service(callback: CallbackQuery, is_admin: bool, lan
             await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
             return
         text, kb = await build_admin_service_detail(session, service, lang)
-    await callback.message.edit_text(text, reply_markup=kb)
+    await safe_edit_text(callback.message,text, reply_markup=kb)
     await safe_callback_answer(callback)
 
 
@@ -248,7 +249,7 @@ async def location_delete_prompt(callback: CallbackQuery, is_admin: bool, lang: 
         if not location:
             await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
             return
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         t(lang, "location_delete_confirm"),
         reply_markup=location_delete_confirm_kb(location_id, lang),
     )

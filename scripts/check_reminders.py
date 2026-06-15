@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Verify reminder configuration, model fields, and i18n keys."""
+"""Diagnose reminder configuration and upcoming booking eligibility."""
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -11,65 +12,125 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def main() -> int:
-    errors: list[str] = []
+async def diagnose() -> int:
+    from app.config import get_settings
+    from app.database.session import async_session_factory
+    from app.repositories import BookingRepository
+    from app.services.reminder_diagnostics import (
+        REMINDER_SENT_AT_FIELDS,
+        format_booking_reminder_state_lines,
+        reminder_was_sent,
+    )
+    from app.services.reminder_matching import is_reminder_due, reminder_window_label
+    from app.services.reminder_settings import load_reminder_config
+    from app.utils.datetime_utils import now_local, to_local_naive
 
-    try:
-        from app.config import get_settings
-        from app.services.reminder_settings import reminder_config_from_settings
-        from app.services.reminder_service import ReminderService
+    settings = get_settings()
+    now = now_local()
+    print(f"TIMEZONE={settings.timezone}")
+    print(f"Now (local naive): {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    print()
+    print("Reminder duplicate-prevention columns on bookings (datetime, NULL = not sent yet):")
+    for field, label in REMINDER_SENT_AT_FIELDS:
+        print(f"  - {field}  ({label})")
+    print()
+    print("Use this script instead of raw SQL with old names like client_reminder_1_sent.")
+    print()
 
-        settings = get_settings()
-        config = reminder_config_from_settings(settings)
-        assert config.client_reminder_1_minutes > 0, "client_reminder_1_minutes must be positive"
-        assert config.client_reminder_2_minutes > 0, "client_reminder_2_minutes must be positive"
-        assert config.admin_reminder_minutes > 0, "admin_reminder_minutes must be positive"
-        print("OK: reminder config loads from .env")
-        print(f"  enabled={config.enabled} test_mode={config.test_mode}")
-        print(f"  client_r1={config.client_reminder_1_minutes}m client_r2={config.client_reminder_2_minutes}m")
-        print(f"  admin={config.admin_reminder_minutes}m")
-        print("OK: ReminderService imports")
-    except Exception as exc:
-        errors.append(f"config/service import: {exc}")
+    async with async_session_factory() as session:
+        config = await load_reminder_config(session)
+        bookings = await BookingRepository(session).list_for_reminders(now)
 
-    try:
-        from app.models import Booking
+    print(f"Reminders enabled: {config.enabled}")
+    print(f"Test mode: {config.test_mode}")
+    if config.test_mode:
+        print(f"  Test client reminder: {config.test_client_reminder_minutes} min")
+        print(f"  Test admin reminder: {config.test_admin_reminder_minutes} min")
+    else:
+        print(f"  Client reminder 1: {config.client_reminder_1_minutes} min")
+        print(f"  Client reminder 2: {config.client_reminder_2_minutes} min")
+        print(f"  Admin reminder: {config.admin_reminder_minutes} min")
+    print(f"Attendance confirmation: {config.attendance_confirmation_enabled}")
+    print(f"Bookings eligible for reminders: {len(bookings)}")
+    print()
 
-        for field in (
-            "client_reminder_1_sent_at",
-            "client_reminder_2_sent_at",
-            "admin_reminder_sent_at",
-        ):
-            if not hasattr(Booking, field):
-                errors.append(f"Booking model missing field: {field}")
-        if not errors:
-            print("OK: booking reminder fields exist on model")
-    except Exception as exc:
-        errors.append(f"model check: {exc}")
+    if not bookings:
+        print("No upcoming pending/confirmed bookings.")
+        return 0
 
-    try:
-        from app.bot.i18n import TEXTS, t
+    print("Upcoming bookings (soonest first):")
+    print("-" * 72)
+    for booking in bookings[:25]:
+        start = to_local_naive(booking.start_at)
+        delta = (start - now).total_seconds() / 60
+        status = booking.status.value if hasattr(booking.status, "value") else booking.status
+        print(
+            f"#{booking.id}  start={start.strftime('%Y-%m-%d %H:%M')}  "
+            f"in {delta:.1f} min  status={status}"
+        )
+        for line in format_booking_reminder_state_lines(booking):
+            print(line)
+        print(f"    attendance_status={booking.attendance_status or 'none'}")
 
-        for lang in TEXTS:
-            for key in ("reminder_client", "reminder_admin"):
-                if key not in TEXTS[lang]:
-                    errors.append(f"missing i18n key {key!r} for lang {lang!r}")
-                else:
-                    t(lang, key, service_name="Test", date_time="01.01.2026 10:00")
-        t("en", "reminder_admin", service_name="Test", date_time="01.01.2026 10:00", client_name="A", client_phone="+1")
-        if not errors:
-            print("OK: reminder translation keys exist (ru/en)")
-    except Exception as exc:
-        errors.append(f"i18n check: {exc}")
+        if config.test_mode:
+            ct = config.test_client_reminder_minutes
+            at = config.test_admin_reminder_minutes
+            client_due = (
+                not reminder_was_sent(booking, "client_reminder_1_sent_at")
+                and is_reminder_due(delta, ct)
+            )
+            admin_due = (
+                not reminder_was_sent(booking, "admin_reminder_sent_at")
+                and is_reminder_due(delta, at)
+            )
+            print(
+                f"    client test due now: {client_due}  "
+                f"(checks client_reminder_1_sent_at IS NULL)  "
+                f"window={reminder_window_label(ct)}  target={ct}min"
+            )
+            print(
+                f"    admin test due now: {admin_due}  "
+                f"(checks admin_reminder_sent_at IS NULL)  "
+                f"window={reminder_window_label(at)}  target={at}min"
+            )
+        else:
+            c1_due = (
+                not reminder_was_sent(booking, "client_reminder_1_sent_at")
+                and delta > config.client_reminder_2_minutes
+                and is_reminder_due(delta, config.client_reminder_1_minutes)
+            )
+            c2_due = (
+                not reminder_was_sent(booking, "client_reminder_2_sent_at")
+                and delta <= config.client_reminder_2_minutes
+                and is_reminder_due(delta, config.client_reminder_2_minutes)
+            )
+            adm_due = (
+                not reminder_was_sent(booking, "admin_reminder_sent_at")
+                and is_reminder_due(delta, config.admin_reminder_minutes)
+            )
+            print(
+                f"    client_reminder_1 due now: {c1_due}  "
+                f"window={reminder_window_label(config.client_reminder_1_minutes)}"
+            )
+            print(
+                f"    client_reminder_2 due now: {c2_due}  "
+                f"window={reminder_window_label(config.client_reminder_2_minutes)}"
+            )
+            print(
+                f"    admin_reminder due now: {adm_due}  "
+                f"window={reminder_window_label(config.admin_reminder_minutes)}"
+            )
+        print()
 
-    if errors:
-        print("FAILED:")
-        for err in errors:
-            print(f"  - {err}")
-        return 1
-
-    print("All reminder checks passed.")
     return 0
+
+
+def main() -> int:
+    try:
+        return asyncio.run(diagnose())
+    except Exception as exc:
+        print(f"FAIL: {exc}")
+        return 1
 
 
 if __name__ == "__main__":

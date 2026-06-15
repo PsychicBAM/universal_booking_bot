@@ -154,6 +154,13 @@ class Booking(Base):
     client_reminder_1_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     client_reminder_2_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     admin_reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attendance_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    attendance_responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attendance_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attendance_reminder_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    attendance_manual_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attendance_manual_sent_by_admin_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    attendance_manual_sent_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     # Legacy SQLite columns — kept for INSERT compatibility with existing databases.
     reminder_24h_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
     reminder_2h_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)

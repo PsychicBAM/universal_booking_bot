@@ -519,6 +519,96 @@ TEXTS: dict[str, dict[str, str]] = {
             "Date and time: {date_time}\n"
             "We are waiting for you!"
         ),
+        "attendance_yes_button": "✅ Confirm",
+        "attendance_no_button": "❌ Need to change",
+        "attendance_prompt": "Please confirm that your booking is still valid.",
+        "attendance_reminder_title": "🔔 Booking confirmation",
+        "attendance_reminder_intro": "You have an upcoming booking:",
+        "attendance_reminder_service": "Service: {service}",
+        "attendance_reminder_datetime": "Date and time: {date_time}",
+        "attendance_reminder_service_location": "Location: {title}",
+        "attendance_reminder_service_location_address": "\nAddress: {address}",
+        "attendance_reminder_client_address": "Address: {address}",
+        "attendance_reminder_response_confirmed": "Client response: confirmed",
+        "attendance_reminder_response_cannot": "Client response: cannot attend",
+        "attendance_confirmed_client": "✅ Thank you! The admin has received your confirmation.",
+        "attendance_confirmed_admin": (
+            "✅ Client confirmed the booking\n"
+            "Client: {client_name}\n"
+            "Phone: {phone}\n"
+            "Service: {service}\n"
+            "Date and time: {date_time}"
+        ),
+        "attendance_cannot_attend_admin": (
+            "⚠️ Client said the booking needs changes\n"
+            "Client: {client_name}\n"
+            "Phone: {phone}\n"
+            "Service: {service}\n"
+            "Date and time: {date_time}"
+        ),
+        "attendance_action_prompt": "What would you like to do with this booking?",
+        "attendance_reschedule_button": "🔁 Reschedule booking",
+        "attendance_cancel_button": "❌ Cancel booking",
+        "attendance_reason_button": "💬 Add reason",
+        "attendance_keep_button": "🔙 Keep booking",
+        "attendance_reason_prompt": "Write the reason why you can't attend.",
+        "attendance_reason_saved": "Reason saved. The admin has been notified.",
+        "attendance_reason_too_long": "Reason is too long (max {max_len} characters).",
+        "attendance_keep_saved": (
+            "Okay, the booking remains unchanged. The admin has already received your response."
+        ),
+        "attendance_unavailable": "This booking is no longer available.",
+        "attendance_status_confirmed": "✅ Client confirmed the booking",
+        "attendance_status_cannot_attend": "⚠️ Client said the booking needs changes",
+        "attendance_status_reason": "Reason: {reason}",
+        "attendance_client_response_confirmed": "Reminder response: confirmed",
+        "attendance_client_response_cannot": "Reminder response: cannot attend",
+        "attendance_reason_admin": (
+            "💬 Client provided a reason\n"
+            "Client: {client_name}\n"
+            "Phone: {phone}\n"
+            "Service: {service}\n"
+            "Date and time: {date_time}\n"
+            "Reason: {reason}"
+        ),
+        "attendance_reschedule_fallback": (
+            'To reschedule, open "My bookings" and choose "Reschedule", or contact the admin.'
+        ),
+        "attendance_manual_title": "🔔 Booking confirmation",
+        "attendance_manual_intro": "You have an upcoming booking:",
+        "admin_attendance_button": "🔔 Booking confirmation",
+        "admin_attendance_title": "🔔 Booking confirmation",
+        "admin_attendance_filter_today": "🔥 Today",
+        "admin_attendance_filter_tomorrow": "⏰ Tomorrow",
+        "admin_attendance_filter_7d": "📅 7 days",
+        "admin_attendance_filter_all": "🗓 All upcoming",
+        "admin_attendance_filter_no_response": "❔ No response",
+        "admin_attendance_section_today": "🔥 Today",
+        "admin_attendance_section_tomorrow": "⏰ Tomorrow",
+        "admin_attendance_section_week": "📅 Next 7 days",
+        "admin_attendance_section_later": "🗓 Later",
+        "admin_attendance_no_bookings": "No upcoming bookings for this filter.",
+        "admin_attendance_send_question": "🔔 Send confirmation question",
+        "admin_attendance_sent": "✅ Question sent to client.",
+        "admin_attendance_send_failed": "❌ Could not send the question. The client may have blocked the bot.",
+        "admin_attendance_already_answered_confirm": "Client already responded. Send the question again?",
+        "admin_attendance_resend_yes": "✅ Yes, send",
+        "admin_attendance_resend_no": "❌ No",
+        "admin_attendance_client_response": "Client response: {response}",
+        "admin_attendance_no_response": "no response",
+        "admin_attendance_client_response_confirmed": "confirmed",
+        "admin_attendance_client_response_cannot": "cannot attend",
+        "admin_attendance_client_response_reason": "reason provided",
+        "admin_attendance_booking_line": "Booking: #{booking_id}",
+        "admin_attendance_client_line": "Client: {client_name}",
+        "admin_attendance_phone_line": "Phone: {phone}",
+        "admin_attendance_service_line": "Service: {service}",
+        "admin_attendance_datetime_line": "Date and time: {date_time}",
+        "admin_attendance_reason_line": "Reason: {reason}",
+        "admin_attendance_manual_info": "Manually sent: {count} time(s)",
+        "admin_attendance_back_to_list": "🔙 Back to list",
+        "pagination_prev": "⬅️ Previous",
+        "pagination_next": "Next ➡️",
         "reminder_admin": (
             "🔔 Upcoming client booking\n"
             "Service: {service_name}\n"
@@ -563,6 +653,44 @@ TEXTS: dict[str, dict[str, str]] = {
         "enabled_languages_saved": "✅ Available languages updated.",
         "language_switching_disabled": "Language switching is disabled. This bot is available only in English.",
         "settings_contact_btn": "📞 Admin contact",
+        "confirm_settings_button": "🔔 Booking confirmation",
+        "confirm_settings_title": "🔔 Booking confirmation",
+        "confirm_settings_title_lang": "🔔 Booking confirmation — {target_lang}",
+        "confirm_settings_intro": (
+            "Customize the question and button labels clients see in reminders "
+            "or when you send a confirmation question manually."
+        ),
+        "confirm_select_language": "Choose a language to configure:",
+        "confirm_current_texts": "Current texts:",
+        "confirm_current_title": "Title: {value}",
+        "confirm_current_question": "Question: {value}",
+        "confirm_button_confirm": "Confirm button: {value}",
+        "confirm_button_change": "Change button: {value}",
+        "confirm_group_main_text": "✏️ Main text",
+        "confirm_group_responses": "💬 Responses & notifications",
+        "confirm_preview_btn": "👁 Preview",
+        "confirm_preview_ru": "👁 Preview RU",
+        "confirm_preview_en": "👁 Preview EN",
+        "confirm_reset_btn": "♻️ Reset",
+        "confirm_back": "🔙 Back",
+        "confirm_back_to_confirmation": "🔙 Back",
+        "confirm_edit_title_plain": "✏️ Title",
+        "confirm_edit_question_plain": "✏️ Question",
+        "confirm_edit_confirm_button": "✏️ Confirm button",
+        "confirm_edit_change_button": "✏️ Change button",
+        "confirm_edit_client_confirm_response": "✏️ Client reply after confirm",
+        "confirm_edit_client_change_prompt": "✏️ Text after “need to change”",
+        "confirm_edit_admin_confirm_notice": "✏️ Admin notice: confirmed",
+        "confirm_edit_admin_change_notice": "✏️ Admin notice: needs changes",
+        "confirm_reset_confirm_text": "Reset booking confirmation texts for {target_lang}?",
+        "confirm_reset_yes": "✅ Yes, reset",
+        "confirm_reset_no": "❌ No",
+        "confirm_lang_name_ru": "Russian",
+        "confirm_lang_name_en": "English",
+        "confirm_edit_prompt": "Send new text for: {field}\nMax length: {max_len}",
+        "confirm_value_empty": "Text cannot be empty.",
+        "confirm_value_too_long": "Text is too long (max {max_len} characters).",
+        "confirm_preview_hint": "Preview only — buttons are not active.",
         "start_screen_btn": "👋 Start screen",
         "start_screen_menu_title": "👋 Start screen",
         "start_screen_menu_body": (
@@ -627,6 +755,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "settings_reminder_client2_btn": "⏰ Second client reminder",
         "settings_reminder_admin_btn": "👤 Admin reminder",
         "settings_reminder_test_btn": "🧪 Test mode",
+        "settings_test_send_nearest_btn": "🧪 Send test reminder for nearest booking",
+        "reminder_test_manual_ok": "✅ Test reminders sent for booking #{booking_id} (scheduled flags unchanged).",
+        "reminder_test_manual_partial": "⚠️ Only some test reminders were delivered for booking #{booking_id}. Check logs.",
+        "reminder_test_manual_fail": "❌ Could not send test reminders. Check logs and Telegram delivery.",
+        "reminder_test_manual_no_bookings": "❌ No upcoming bookings found for a test reminder.",
+        "reminder_test_manual_hint": "Tip: enable test mode and use scripts/check_reminders.py to see due windows.",
         "settings_enter_manual_btn": "✏️ Enter manually",
         "settings_enter_minutes_prompt": "Enter time in minutes, for example 60",
         "settings_invalid_minutes": "Enter a number from 1 to 10080.",
@@ -1267,6 +1401,96 @@ TEXTS: dict[str, dict[str, str]] = {
             "Дата и время: {date_time}\n"
             "Ждём вас!"
         ),
+        "attendance_yes_button": "✅ Подтверждаю",
+        "attendance_no_button": "❌ Нужно изменить",
+        "attendance_prompt": "Подтвердите, пожалуйста, актуальность вашей записи.",
+        "attendance_reminder_title": "🔔 Подтверждение записи",
+        "attendance_reminder_intro": "У вас запланирована запись:",
+        "attendance_reminder_service": "Услуга: {service}",
+        "attendance_reminder_datetime": "Дата и время: {date_time}",
+        "attendance_reminder_service_location": "Место: {title}",
+        "attendance_reminder_service_location_address": "\nАдрес: {address}",
+        "attendance_reminder_client_address": "Адрес: {address}",
+        "attendance_reminder_response_confirmed": "Ответ клиента: подтверждено",
+        "attendance_reminder_response_cannot": "Ответ клиента: не сможет прийти",
+        "attendance_confirmed_client": "✅ Спасибо! Администратор получил подтверждение.",
+        "attendance_confirmed_admin": (
+            "✅ Клиент подтвердил запись\n"
+            "Клиент: {client_name}\n"
+            "Телефон: {phone}\n"
+            "Услуга: {service}\n"
+            "Дата и время: {date_time}"
+        ),
+        "attendance_cannot_attend_admin": (
+            "⚠️ Клиент сообщил, что запись нужно изменить\n"
+            "Клиент: {client_name}\n"
+            "Телефон: {phone}\n"
+            "Услуга: {service}\n"
+            "Дата и время: {date_time}"
+        ),
+        "attendance_action_prompt": "Что вы хотите сделать с записью?",
+        "attendance_reschedule_button": "🔁 Перенести запись",
+        "attendance_cancel_button": "❌ Отменить запись",
+        "attendance_reason_button": "💬 Указать причину",
+        "attendance_keep_button": "🔙 Оставить как есть",
+        "attendance_reason_prompt": "Напишите причину, почему не сможете прийти.",
+        "attendance_reason_saved": "Причина сохранена. Администратор уведомлён.",
+        "attendance_reason_too_long": "Слишком длинный текст (макс. {max_len} символов).",
+        "attendance_keep_saved": (
+            "Хорошо, запись оставлена без изменений. Администратор уже получил ваш ответ."
+        ),
+        "attendance_unavailable": "Эта запись уже недоступна.",
+        "attendance_status_confirmed": "✅ Клиент подтвердил запись",
+        "attendance_status_cannot_attend": "⚠️ Клиент сообщил, что запись нужно изменить",
+        "attendance_status_reason": "Причина: {reason}",
+        "attendance_client_response_confirmed": "Ответ на напоминание: подтверждено",
+        "attendance_client_response_cannot": "Ответ на напоминание: не сможет прийти",
+        "attendance_reason_admin": (
+            "💬 Клиент указал причину\n"
+            "Клиент: {client_name}\n"
+            "Телефон: {phone}\n"
+            "Услуга: {service}\n"
+            "Дата и время: {date_time}\n"
+            "Причина: {reason}"
+        ),
+        "attendance_reschedule_fallback": (
+            "Чтобы перенести запись, откройте «Мои записи» и выберите «Перенести», либо напишите администратору."
+        ),
+        "attendance_manual_title": "🔔 Подтверждение записи",
+        "attendance_manual_intro": "У вас запланирована запись:",
+        "admin_attendance_button": "🔔 Подтверждение записи",
+        "admin_attendance_title": "🔔 Подтверждение записи",
+        "admin_attendance_filter_today": "🔥 Сегодня",
+        "admin_attendance_filter_tomorrow": "⏰ Завтра",
+        "admin_attendance_filter_7d": "📅 7 дней",
+        "admin_attendance_filter_all": "🗓 Все будущие",
+        "admin_attendance_filter_no_response": "❔ Без ответа",
+        "admin_attendance_section_today": "🔥 Сегодня",
+        "admin_attendance_section_tomorrow": "⏰ Завтра",
+        "admin_attendance_section_week": "📅 Ближайшие 7 дней",
+        "admin_attendance_section_later": "🗓 Позже",
+        "admin_attendance_no_bookings": "Нет подходящих предстоящих записей.",
+        "admin_attendance_send_question": "🔔 Отправить вопрос подтверждения",
+        "admin_attendance_sent": "✅ Вопрос отправлен клиенту.",
+        "admin_attendance_send_failed": "❌ Не удалось отправить вопрос. Возможно, клиент заблокировал бота.",
+        "admin_attendance_already_answered_confirm": "Клиент уже ответил. Отправить вопрос ещё раз?",
+        "admin_attendance_resend_yes": "✅ Да, отправить",
+        "admin_attendance_resend_no": "❌ Нет",
+        "admin_attendance_client_response": "Ответ клиента: {response}",
+        "admin_attendance_no_response": "нет ответа",
+        "admin_attendance_client_response_confirmed": "подтверждено",
+        "admin_attendance_client_response_cannot": "не сможет прийти",
+        "admin_attendance_client_response_reason": "указана причина",
+        "admin_attendance_booking_line": "Запись: #{booking_id}",
+        "admin_attendance_client_line": "Клиент: {client_name}",
+        "admin_attendance_phone_line": "Телефон: {phone}",
+        "admin_attendance_service_line": "Услуга: {service}",
+        "admin_attendance_datetime_line": "Дата и время: {date_time}",
+        "admin_attendance_reason_line": "Причина: {reason}",
+        "admin_attendance_manual_info": "Отправлено вручную: {count} раз(а)",
+        "admin_attendance_back_to_list": "🔙 Назад к списку",
+        "pagination_prev": "⬅️ Назад",
+        "pagination_next": "Далее ➡️",
         "reminder_admin": (
             "🔔 Скоро запись клиента\n"
             "Услуга: {service_name}\n"
@@ -1311,6 +1535,44 @@ TEXTS: dict[str, dict[str, str]] = {
         "enabled_languages_saved": "✅ Доступные языки обновлены.",
         "language_switching_disabled": "Смена языка отключена. В этом боте доступен только русский язык.",
         "settings_contact_btn": "📞 Контакт админа",
+        "confirm_settings_button": "🔔 Подтверждение записи",
+        "confirm_settings_title": "🔔 Подтверждение записи",
+        "confirm_settings_title_lang": "🔔 Подтверждение записи — {target_lang}",
+        "confirm_settings_intro": (
+            "Настройте текст вопроса и кнопок, которые клиент видит "
+            "в напоминании или при ручной отправке вопроса."
+        ),
+        "confirm_select_language": "Выберите язык для настройки:",
+        "confirm_current_texts": "Текущие тексты:",
+        "confirm_current_title": "Заголовок: {value}",
+        "confirm_current_question": "Вопрос: {value}",
+        "confirm_button_confirm": "Кнопка подтверждения: {value}",
+        "confirm_button_change": "Кнопка изменения: {value}",
+        "confirm_group_main_text": "✏️ Основной текст",
+        "confirm_group_responses": "💬 Ответы и уведомления",
+        "confirm_preview_btn": "👁 Предпросмотр",
+        "confirm_preview_ru": "👁 Предпросмотр RU",
+        "confirm_preview_en": "👁 Preview EN",
+        "confirm_reset_btn": "♻️ Сбросить",
+        "confirm_back": "🔙 Назад",
+        "confirm_back_to_confirmation": "🔙 Назад",
+        "confirm_edit_title_plain": "✏️ Заголовок",
+        "confirm_edit_question_plain": "✏️ Вопрос",
+        "confirm_edit_confirm_button": "✏️ Кнопка подтверждения",
+        "confirm_edit_change_button": "✏️ Кнопка изменения",
+        "confirm_edit_client_confirm_response": "✏️ Ответ клиенту после подтверждения",
+        "confirm_edit_client_change_prompt": "✏️ Текст после «нужно изменить»",
+        "confirm_edit_admin_confirm_notice": "✏️ Уведомление админу: подтверждено",
+        "confirm_edit_admin_change_notice": "✏️ Уведомление админу: нужно изменить",
+        "confirm_reset_confirm_text": "Сбросить настройки подтверждения записи для {target_lang}?",
+        "confirm_reset_yes": "✅ Да, сбросить",
+        "confirm_reset_no": "❌ Нет",
+        "confirm_lang_name_ru": "русского языка",
+        "confirm_lang_name_en": "английского языка",
+        "confirm_edit_prompt": "Отправьте новый текст: {field}\nМакс. длина: {max_len}",
+        "confirm_value_empty": "Текст не может быть пустым.",
+        "confirm_value_too_long": "Слишком длинный текст (макс. {max_len} символов).",
+        "confirm_preview_hint": "Только предпросмотр — кнопки неактивны.",
         "start_screen_btn": "👋 Стартовое сообщение",
         "start_screen_menu_title": "👋 Стартовое сообщение",
         "start_screen_menu_body": (
@@ -1375,6 +1637,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "settings_reminder_client2_btn": "⏰ Второе напоминание клиенту",
         "settings_reminder_admin_btn": "👤 Напоминание админу",
         "settings_reminder_test_btn": "🧪 Тестовый режим",
+        "settings_test_send_nearest_btn": "🧪 Отправить тестовое напоминание по ближайшей записи",
+        "reminder_test_manual_ok": "✅ Тестовые напоминания отправлены по записи #{booking_id} (флаги расписания не изменены).",
+        "reminder_test_manual_partial": "⚠️ Часть тестовых напоминаний не доставлена по записи #{booking_id}. Смотрите логи.",
+        "reminder_test_manual_fail": "❌ Не удалось отправить тестовые напоминания. Проверьте логи и доставку в Telegram.",
+        "reminder_test_manual_no_bookings": "❌ Нет предстоящих записей для тестового напоминания.",
+        "reminder_test_manual_hint": "Подсказка: включите тестовый режим и запустите scripts/check_reminders.py для проверки окон.",
         "settings_enter_manual_btn": "✏️ Ввести вручную",
         "settings_enter_minutes_prompt": "Введите время в минутах, например 60",
         "settings_invalid_minutes": "Введите число от 1 до 10080.",

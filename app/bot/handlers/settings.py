@@ -6,6 +6,7 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.i18n import t
 from app.bot.utils.callbacks import safe_callback_answer
+from app.bot.utils.telegram_ui import safe_edit_text
 from app.bot.keyboards import ADMIN_SETTINGS_TEXTS, admin_menu, cancel_kb
 from app.bot.keyboards.settings_kb import (
     reminder_admin_presets_kb,
@@ -65,7 +66,11 @@ async def open_settings(message: Message, state: FSMContext, is_admin: bool, lan
     await send_settings_main(message, lang, message.from_user.id)
 
 
-@router.callback_query(F.data.startswith("set:") & ~F.data.startswith("set:start:"))
+@router.callback_query(
+    F.data.startswith("set:")
+    & ~F.data.startswith("set:start:")
+    & ~F.data.startswith("conf:")
+)
 async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admin: bool, lang: str) -> None:
     if not is_admin:
         await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
@@ -83,8 +88,8 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
 
     if data == "set:back:main":
         await state.clear()
-        await edit_to_settings_main(callback, lang)
         await safe_callback_answer(callback)
+        await edit_to_settings_main(callback, lang)
         return
 
     if data == "set:ac:toggle":
@@ -95,8 +100,8 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
         return
 
     if data == "set:rm:open":
-        await edit_to_reminders(callback, lang)
         await safe_callback_answer(callback)
+        await edit_to_reminders(callback, lang)
         return
 
     if data == "set:rm:toggle":
@@ -106,27 +111,30 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
         return
 
     if data == "set:rm:c1":
-        await callback.message.edit_text(
+        await safe_callback_answer(callback)
+        await safe_edit_text(
+            callback.message,
             t(lang, "settings_reminder_client1_btn"),
             reply_markup=reminder_client1_presets_kb(lang),
         )
-        await safe_callback_answer(callback)
         return
 
     if data == "set:rm:c2":
-        await callback.message.edit_text(
+        await safe_callback_answer(callback)
+        await safe_edit_text(
+            callback.message,
             t(lang, "settings_reminder_client2_btn"),
             reply_markup=reminder_client2_presets_kb(lang),
         )
-        await safe_callback_answer(callback)
         return
 
     if data == "set:rm:adm":
-        await callback.message.edit_text(
+        await safe_callback_answer(callback)
+        await safe_edit_text(
+            callback.message,
             t(lang, "settings_reminder_admin_btn"),
             reply_markup=reminder_admin_presets_kb(lang),
         )
-        await safe_callback_answer(callback)
         return
 
     if data.startswith("set:rm:c1:") and parts[-1].isdigit():
@@ -166,8 +174,8 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
         return
 
     if data == "set:rm:test:open":
-        await edit_to_test_mode(callback, lang)
         await safe_callback_answer(callback)
+        await edit_to_test_mode(callback, lang)
         return
 
     if data == "set:rm:test:toggle":
@@ -177,19 +185,21 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
         return
 
     if data == "set:rm:test:cl:menu":
-        await callback.message.edit_text(
+        await safe_callback_answer(callback)
+        await safe_edit_text(
+            callback.message,
             t(lang, "settings_test_client_section"),
             reply_markup=test_client_presets_kb(lang),
         )
-        await safe_callback_answer(callback)
         return
 
     if data == "set:rm:test:ad:menu":
-        await callback.message.edit_text(
+        await safe_callback_answer(callback)
+        await safe_edit_text(
+            callback.message,
             t(lang, "settings_test_admin_section"),
             reply_markup=test_admin_presets_kb(lang),
         )
-        await safe_callback_answer(callback)
         return
 
     if data.startswith("set:rm:test:cl:") and parts[-1].isdigit():
@@ -204,9 +214,23 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
         await edit_to_test_mode(callback, lang)
         return
 
-    if data == "set:enabled:open":
-        await edit_to_enabled_languages(callback, lang)
+    if data == "set:rm:test:send_now":
+        from app.services.reminder_service import ReminderService
+
         await safe_callback_answer(callback)
+        result = await ReminderService(callback.bot).send_manual_test_reminders()
+        alert = not result.ok
+        kwargs = {}
+        if result.booking_id is not None:
+            kwargs["booking_id"] = str(result.booking_id)
+        await callback.message.answer(t(lang, result.message_key, **kwargs))
+        if alert:
+            await callback.message.answer(t(lang, "reminder_test_manual_hint"))
+        return
+
+    if data == "set:enabled:open":
+        await safe_callback_answer(callback)
+        await edit_to_enabled_languages(callback, lang)
         return
 
     if data in ("set:enabled:ru", "set:enabled:en", "set:enabled:both"):
@@ -220,8 +244,8 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
         return
 
     if data == "set:lang:open":
-        await edit_to_language(callback, lang)
         await safe_callback_answer(callback)
+        await edit_to_language(callback, lang)
         return
 
     if data in ("set:lang:ru", "set:lang:en"):
@@ -239,8 +263,8 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
         return
 
     if data == "set:contact:open":
-        await edit_to_contact(callback, lang)
         await safe_callback_answer(callback)
+        await edit_to_contact(callback, lang)
         return
 
     if data == "set:contact:edit":
@@ -257,13 +281,13 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
         return
 
     if data == "set:adv:open":
-        await edit_to_advanced(callback, lang)
         await safe_callback_answer(callback)
+        await edit_to_advanced(callback, lang)
         return
 
     if data == "set:cal:open":
-        await edit_to_calendar(callback, lang)
         await safe_callback_answer(callback)
+        await edit_to_calendar(callback, lang)
         return
 
     if data == "set:cal:noop":
@@ -299,17 +323,18 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
         else:
             text = t(lang, result.message_key)
         try:
-            await status_msg.edit_text(text)
+            await safe_edit_text(status_msg, text)
         except Exception:
             await callback.message.answer(text)
         return
 
     if data == "set:adv:keys":
-        await callback.message.edit_text(
+        await safe_callback_answer(callback)
+        await safe_edit_text(
+            callback.message,
             f"{t(lang, 'settings_advanced_keys_title')}\n\n{t(lang, 'settings_advanced_keys_list')}",
             reply_markup=settings_advanced_keys_kb(lang),
         )
-        await safe_callback_answer(callback)
         return
 
     if data == "set:adv:manual":

@@ -1,14 +1,48 @@
+import json
 from functools import lru_cache
+from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def parse_admin_ids(value: Any) -> list[int]:
+    """Parse ADMIN_IDS from comma-separated string, JSON list, or empty value."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [_admin_id_to_int(item) for item in value if item is not None and str(item).strip()]
+    raw = str(value).strip()
+    if not raw or raw == "[]":
+        return []
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ('"', "'"):
+        raw = raw[1:-1].strip()
+    if raw.startswith("["):
+        parsed = json.loads(raw)
+        if not isinstance(parsed, list):
+            raise ValueError("ADMIN_IDS must be a JSON array, e.g. [123456789,987654321]")
+        return [_admin_id_to_int(item) for item in parsed if item is not None and str(item).strip()]
+    result: list[int] = []
+    for part in raw.split(","):
+        part = part.strip().strip('"').strip("'")
+        if not part:
+            continue
+        result.append(_admin_id_to_int(part))
+    return result
+
+
+def _admin_id_to_int(value: Any) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"ADMIN_IDS: invalid admin ID '{value}' (must be numeric)") from exc
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     bot_token: str = Field(..., alias="BOT_TOKEN")
-    admin_ids: list[int] = Field(default_factory=list, alias="ADMIN_IDS")
+    admin_ids_env: str = Field(default="", alias="ADMIN_IDS")
     database_url: str = Field(
         "sqlite+aiosqlite:///data/booking_bot.db",
         alias="DATABASE_URL",
@@ -40,6 +74,25 @@ class Settings(BaseSettings):
     reminder_test_mode: bool = Field(False, alias="REMINDER_TEST_MODE")
     test_client_reminder_minutes: int = Field(5, alias="TEST_CLIENT_REMINDER_MINUTES")
     test_admin_reminder_minutes: int = Field(3, alias="TEST_ADMIN_REMINDER_MINUTES")
+    attendance_confirmation_enabled: bool = Field(True, alias="ATTENDANCE_CONFIRMATION_ENABLED")
+    attendance_confirmation_reminder: str = Field("client_1", alias="ATTENDANCE_CONFIRMATION_REMINDER")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def admin_ids(self) -> list[int]:
+        return parse_admin_ids(self.admin_ids_env)
+
+    @property
+    def admin_id_list(self) -> list[int]:
+        return self.admin_ids
+
+    @field_validator("attendance_confirmation_reminder", mode="before")
+    @classmethod
+    def normalize_attendance_reminder(cls, value: object) -> str:
+        raw = str(value or "client_1").strip().lower()
+        if raw in ("client_1", "client_2", "both"):
+            return raw
+        return "client_1"
 
     @field_validator("supported_languages", mode="before")
     @classmethod
@@ -49,15 +102,6 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [str(v).strip() for v in value]
         return [part.strip() for part in str(value).split(",") if part.strip()]
-
-    @field_validator("admin_ids", mode="before")
-    @classmethod
-    def parse_admin_ids(cls, value: object) -> list[int]:
-        if value is None or value == "":
-            return []
-        if isinstance(value, list):
-            return [int(v) for v in value]
-        return [int(part.strip()) for part in str(value).split(",") if part.strip()]
 
     def effective_reschedule_hours_before(self) -> int:
         if self.reschedule_booking_hours_before is not None:

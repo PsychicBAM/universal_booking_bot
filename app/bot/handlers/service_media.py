@@ -3,6 +3,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.utils.callbacks import safe_callback_answer
+from app.bot.utils.telegram_ui import safe_edit_text
 
 from app.bot.i18n import t
 from app.bot.keyboards import cancel_kb
@@ -51,7 +52,7 @@ async def show_media_menu(event: Message | CallbackQuery, service_id: int, lang:
     text = _media_menu_text(lang, photos, videos, has_cover)
     keyboard = service_media_menu_kb(service_id, lang)
     if isinstance(event, CallbackQuery):
-        await event.message.edit_text(text, reply_markup=keyboard)
+        await safe_edit_text(event.message,text, reply_markup=keyboard)
         await event.answer()
     else:
         await event.answer(text, reply_markup=keyboard)
@@ -79,7 +80,7 @@ async def media_back(callback: CallbackQuery, is_admin: bool, lang: str, state: 
             await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
             return
         text, kb = await build_admin_service_detail(session, service, lang)
-    await callback.message.edit_text(text, reply_markup=kb)
+    await safe_edit_text(callback.message,text, reply_markup=kb)
     await safe_callback_answer(callback)
 
 
@@ -99,7 +100,7 @@ async def toggle_show_media(callback: CallbackQuery, is_admin: bool, lang: str) 
         text, kb = await build_admin_service_detail(session, service, lang)
     msg = t(lang, "media_display_enabled" if service.show_media_to_clients else "media_display_disabled")
     await safe_callback_answer(callback, msg)
-    await callback.message.edit_text(text, reply_markup=kb)
+    await safe_edit_text(callback.message,text, reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("sm:add:ph:"))
@@ -192,7 +193,7 @@ async def choose_cover_list(callback: CallbackQuery, is_admin: bool, lang: str) 
         await safe_callback_answer(callback, t(lang, "no_photos_for_cover"), show_alert=True)
         return
     photo_ids = [(n, p.id) for n, p in enumerate(photos, start=1)]
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         t(lang, "choose_cover"),
         reply_markup=service_media_cover_kb(service_id, photo_ids, lang),
     )
@@ -216,7 +217,7 @@ async def set_cover(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
         service_id = media.service_id
         photos, videos, has_cover = await get_media_stats(session, service_id)
     await safe_callback_answer(callback, t(lang, "cover_set"))
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         _media_menu_text(lang, photos, videos, has_cover),
         reply_markup=service_media_menu_kb(service_id, lang),
     )
@@ -243,7 +244,7 @@ async def delete_media_list(callback: CallbackQuery, is_admin: bool, lang: str) 
         else:
             video_n += 1
             items.append(("media_video_n", video_n, item.id))
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         t(lang, "delete_media"),
         reply_markup=service_media_delete_kb(service_id, items, lang),
     )
@@ -267,7 +268,7 @@ async def delete_media_item(callback: CallbackQuery, is_admin: bool, lang: str) 
         await session.commit()
         photos, videos, has_cover = await get_media_stats(session, service_id)
     await safe_callback_answer(callback, t(lang, "media_deleted"))
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         _media_menu_text(lang, photos, videos, has_cover),
         reply_markup=service_media_menu_kb(service_id, lang),
     )

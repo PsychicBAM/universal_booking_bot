@@ -10,6 +10,7 @@ from app.bot.keyboards.start_screen_kb import start_screen_reset_confirm_kb
 from app.bot.settings_ui import edit_to_start_screen, send_start_screen_menu
 from app.bot.states import AdminStartScreenStates
 from app.bot.utils.callbacks import safe_callback_answer
+from app.bot.utils.telegram_ui import safe_edit_text
 from app.database.session import async_session_factory
 from app.services.start_screen_service import (
     START_TEXT_MAX_LEN,
@@ -153,7 +154,8 @@ async def start_reset_confirm(callback: CallbackQuery, is_admin: bool, lang: str
         await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
         return
     await safe_callback_answer(callback)
-    await callback.message.edit_text(
+    await safe_edit_text(
+        callback.message,
         t(lang, "start_screen_reset_confirm"),
         reply_markup=start_screen_reset_confirm_kb(lang),
     )

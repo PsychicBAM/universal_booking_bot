@@ -8,8 +8,10 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.bot.handlers import admin, booking_edit, cancel, client, common, service_locations, service_media, start, support
+from app.bot.handlers import admin, attendance, booking_edit, cancel, client, common, service_locations, service_media, start, support
+from app.bot.handlers import admin_attendance
 from app.bot.handlers import settings as settings_handlers
+from app.bot.handlers import confirmation_settings
 from app.bot.handlers import start_screen_settings
 from app.bot.handlers import unavailable
 from app.bot.handlers import working_hours
@@ -49,6 +51,12 @@ async def main() -> None:
         logger.error("BOT_TOKEN is not set. Copy .env.example to .env and configure it.")
         sys.exit(1)
 
+    if not settings.admin_ids:
+        logger.warning(
+            "ADMIN_IDS is empty — admin panel and admin notifications are disabled. "
+            "Set comma-separated Telegram user IDs in .env, e.g. ADMIN_IDS=123456789,987654321"
+        )
+
     if settings.database_url.startswith("sqlite"):
         db_path = settings.database_url.split("///")[-1]
         os.makedirs(os.path.dirname(db_path) or "data", exist_ok=True)
@@ -78,10 +86,13 @@ async def main() -> None:
     dp.callback_query.middleware(LanguageMiddleware())
 
     dp.include_router(cancel.router)
+    dp.include_router(attendance.router)
+    dp.include_router(admin_attendance.router)
     dp.include_router(start.router)
     dp.include_router(working_hours.router)
     dp.include_router(unavailable.router)
     dp.include_router(start_screen_settings.router)
+    dp.include_router(confirmation_settings.router)
     dp.include_router(settings_handlers.router)
     dp.include_router(service_media.router)
     dp.include_router(service_locations.router)

@@ -30,6 +30,8 @@ class ReminderConfig:
     admin_reminder_minutes: int
     test_client_reminder_minutes: int
     test_admin_reminder_minutes: int
+    attendance_confirmation_enabled: bool
+    attendance_confirmation_reminder: str
 
 
 def reminder_config_from_settings(settings: Settings) -> ReminderConfig:
@@ -41,6 +43,8 @@ def reminder_config_from_settings(settings: Settings) -> ReminderConfig:
         admin_reminder_minutes=settings.admin_reminder_minutes,
         test_client_reminder_minutes=settings.test_client_reminder_minutes,
         test_admin_reminder_minutes=settings.test_admin_reminder_minutes,
+        attendance_confirmation_enabled=settings.attendance_confirmation_enabled,
+        attendance_confirmation_reminder=settings.attendance_confirmation_reminder,
     )
 
 
@@ -65,4 +69,6 @@ async def load_reminder_config(session: AsyncSession) -> ReminderConfig:
         admin_reminder_minutes=_parse_int(db_admin, base.admin_reminder_minutes),
         test_client_reminder_minutes=_parse_int(db_test_client, base.test_client_reminder_minutes),
         test_admin_reminder_minutes=_parse_int(db_test_admin, base.test_admin_reminder_minutes),
+        attendance_confirmation_enabled=base.attendance_confirmation_enabled,
+        attendance_confirmation_reminder=base.attendance_confirmation_reminder,
     )

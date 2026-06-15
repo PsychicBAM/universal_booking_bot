@@ -93,6 +93,26 @@ async def _migrate_sqlite_columns() -> None:
             await conn.exec_driver_sql("ALTER TABLE bookings ADD COLUMN service_location_title VARCHAR(255)")
         if "service_location_address" not in booking_columns:
             await conn.exec_driver_sql("ALTER TABLE bookings ADD COLUMN service_location_address TEXT")
+        attendance_cols = (
+            ("attendance_status", "VARCHAR(32)"),
+            ("attendance_responded_at", "DATETIME"),
+            ("attendance_reason", "TEXT"),
+            ("attendance_reminder_type", "VARCHAR(16)"),
+        )
+        for col, col_type in attendance_cols:
+            if col not in booking_columns:
+                await conn.exec_driver_sql(f"ALTER TABLE bookings ADD COLUMN {col} {col_type}")
+
+        result = await conn.exec_driver_sql("PRAGMA table_info(bookings)")
+        booking_columns = {row[1] for row in result.fetchall()}
+        manual_att_cols = (
+            ("attendance_manual_sent_at", "DATETIME"),
+            ("attendance_manual_sent_by_admin_id", "INTEGER"),
+            ("attendance_manual_sent_count", "INTEGER NOT NULL DEFAULT 0"),
+        )
+        for col, col_type in manual_att_cols:
+            if col not in booking_columns:
+                await conn.exec_driver_sql(f"ALTER TABLE bookings ADD COLUMN {col} {col_type}")
 
         result = await conn.exec_driver_sql(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='support_messages'"

@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.utils.callbacks import safe_callback_answer
-from app.bot.utils.telegram_ui import edit_or_send
+from app.bot.utils.telegram_ui import edit_or_send, safe_edit_text
 
 from app.bot.i18n import format_buffer, format_duration, t
 from app.bot.keyboards import (
@@ -154,7 +154,7 @@ def _disabled_services_text(services, lang: str) -> str:
 async def _show_admin_services(callback: CallbackQuery, lang: str) -> None:
     async with async_session_factory() as session:
         services = await ServiceRepository(session).list_active_services()
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         _active_services_text(services, lang),
         reply_markup=admin_active_services_kb(services, lang),
     )
@@ -163,7 +163,7 @@ async def _show_admin_services(callback: CallbackQuery, lang: str) -> None:
 async def _show_disabled_services(callback: CallbackQuery, lang: str) -> None:
     async with async_session_factory() as session:
         services = await ServiceRepository(session).list_disabled_services()
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         _disabled_services_text(services, lang),
         reply_markup=admin_disabled_services_kb(services, lang),
     )
@@ -178,13 +178,13 @@ async def _show_service_detail(callback: CallbackQuery, service_id: int, lang: s
             return False
         if service.archived_at is not None:
             bookings_count = await repo.count_bookings_for_service(service_id)
-            await callback.message.edit_text(
+            await safe_edit_text(callback.message,
                 _format_archived_service_detail(service, bookings_count, lang),
                 reply_markup=archived_service_detail_kb(service_id, lang),
             )
             return True
         text, kb = await build_admin_service_detail(session, service, lang)
-    await callback.message.edit_text(text, reply_markup=kb)
+    await safe_edit_text(callback.message,text, reply_markup=kb)
     return True
 
 
@@ -248,7 +248,7 @@ async def admin_archived_services_list(callback: CallbackQuery, is_admin: bool, 
     body = t(lang, "archived_services_intro")
     if not services:
         body = f"{body}\n\n{t(lang, 'archive_empty')}"
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         f"{t(lang, 'archived_services')}\n\n{body}",
         reply_markup=admin_archived_services_kb(services, lang),
     )
@@ -267,7 +267,7 @@ async def admin_archived_service_detail(callback: CallbackQuery, is_admin: bool,
     if not service or service.archived_at is None:
         await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
         return
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         _format_archived_service_detail(service, bookings_count, lang),
         reply_markup=archived_service_detail_kb(service_id, lang),
     )
@@ -304,7 +304,7 @@ async def admin_permanent_delete_prompt(callback: CallbackQuery, is_admin: bool,
     if bookings_count > 0:
         await safe_callback_answer(callback, t(lang, "delete_permanently_blocked_has_bookings"), show_alert=True)
         return
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         t(lang, "delete_permanently_confirm"),
         reply_markup=permanent_delete_confirm_kb(service_id, lang),
     )
@@ -447,7 +447,7 @@ async def admin_service_toggle_location(callback: CallbackQuery, is_admin: bool,
         text, kb = await build_admin_service_detail(session, service, lang)
     msg = t(lang, "location_request_enabled" if service.requires_location else "location_request_disabled")
     await safe_callback_answer(callback, msg)
-    await callback.message.edit_text(text, reply_markup=kb)
+    await safe_edit_text(callback.message,text, reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("adm_svc_comment:"))
@@ -465,7 +465,7 @@ async def admin_service_toggle_comment(callback: CallbackQuery, is_admin: bool, 
         text, kb = await build_admin_service_detail(session, service, lang)
     msg = t(lang, "client_comment_enabled" if service.ask_client_comment else "client_comment_disabled")
     await safe_callback_answer(callback, msg)
-    await callback.message.edit_text(text, reply_markup=kb)
+    await safe_edit_text(callback.message,text, reply_markup=kb)
 
 
 @router.callback_query(F.data.regexp(r"^svc:disable:\d+$"))
@@ -549,7 +549,7 @@ async def admin_service_delete_confirm(callback: CallbackQuery, is_admin: bool, 
     if not service:
         await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
         return
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         t(lang, "service_delete_confirm"),
         reply_markup=admin_service_delete_confirm_kb(service_id, lang),
     )
@@ -567,7 +567,7 @@ async def admin_service_delete_cancel(callback: CallbackQuery, is_admin: bool, l
             await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
             return
         text, kb = await build_admin_service_detail(session, service, lang)
-    await callback.message.edit_text(text, reply_markup=kb)
+    await safe_edit_text(callback.message,text, reply_markup=kb)
     await safe_callback_answer(callback, t(lang, "service_delete_cancelled"))
 
 
@@ -689,7 +689,7 @@ async def admin_booking_detail(callback: CallbackQuery, is_admin: bool, lang: st
     if not booking:
         await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
         return
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         format_booking(booking, service, lang, admin_view=True),
         reply_markup=admin_booking_detail_kb(booking_id, booking.status.value, lang),
     )
@@ -710,7 +710,7 @@ async def admin_confirm_booking(callback: CallbackQuery, is_admin: bool, lang: s
     except ValueError:
         await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
         return
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         f"{t(lang, 'booking_confirmed_admin')}\n{format_booking(booking, service, lang, admin_view=True)}"
     )
     if client:

@@ -196,24 +196,27 @@ async def my_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: str, 
     await safe_callback_answer(callback)
 
 
-@router.callback_query(F.data.regexp(r"^my:res:\d+$"))
-async def start_reschedule(callback: CallbackQuery, lang: str, state: FSMContext) -> None:
-    booking_id = int(callback.data.split(":")[-1])
+async def begin_client_reschedule(
+    callback: CallbackQuery,
+    booking_id: int,
+    lang: str,
+    state: FSMContext,
+) -> bool:
     settings = get_settings()
     async with async_session_factory() as session:
         booking = await BookingRepository(session).get_by_id(booking_id)
         client = await ClientRepository(session).get_by_telegram_id(callback.from_user.id)
         if not booking or not client or booking.client_id != client.id:
             await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
-            return
+            return False
         if not _is_editable_status(booking):
             await safe_callback_answer(callback, t(lang, "booking_not_editable"), show_alert=True)
-            return
+            return False
         if to_local_naive(booking.start_at) - now_local() <= timedelta(
             hours=settings.effective_reschedule_hours_before()
         ):
             await safe_callback_answer(callback, t(lang, "reschedule_too_late"), show_alert=True)
-            return
+            return False
         service_repo = ServiceRepository(session)
         availability = _availability_service(session)
         dates = await availability.get_available_dates(
@@ -222,7 +225,7 @@ async def start_reschedule(callback: CallbackQuery, lang: str, state: FSMContext
 
     if not dates:
         await safe_callback_answer(callback, t(lang, "no_dates"), show_alert=True)
-        return
+        return False
 
     await state.update_data(
         flow_origin="client_edit",
@@ -236,6 +239,13 @@ async def start_reschedule(callback: CallbackQuery, lang: str, state: FSMContext
         reply_markup=reschedule_dates_kb(booking_id, dates, lang),
     )
     await safe_callback_answer(callback)
+    return True
+
+
+@router.callback_query(F.data.regexp(r"^my:res:\d+$"))
+async def start_reschedule(callback: CallbackQuery, lang: str, state: FSMContext) -> None:
+    booking_id = int(callback.data.split(":")[-1])
+    await begin_client_reschedule(callback, booking_id, lang, state)
 
 
 @router.callback_query(F.data.startswith("my:res:date:"))

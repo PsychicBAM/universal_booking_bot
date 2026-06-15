@@ -65,6 +65,25 @@ Database: `./data/booking_bot.db` (Docker volume).
 |----------|-------------|
 | `BOT_TOKEN` | From @BotFather (**required**) |
 | `ADMIN_IDS` | Comma-separated Telegram user IDs (**required**) |
+
+**`ADMIN_IDS` format** — use numeric Telegram user IDs (from [@userinfobot](https://t.me/userinfobot) or similar):
+
+Single admin:
+
+```env
+ADMIN_IDS=123456789
+```
+
+Multiple admins:
+
+```env
+ADMIN_IDS=123456789,987654321
+```
+
+JSON array format is also supported: `ADMIN_IDS=[123456789,987654321]`
+
+| Variable | Description |
+|----------|-------------|
 | `DATABASE_URL` | Default `sqlite+aiosqlite:///data/booking_bot.db` |
 | `TIMEZONE` | e.g. `Europe/Moscow` |
 | `DEFAULT_LANGUAGE` | `ru` or `en` |
@@ -77,6 +96,8 @@ Database: `./data/booking_bot.db` (Docker volume).
 | `CLIENT_REMINDER_1_MINUTES` | Default 1440 (24h) |
 | `CLIENT_REMINDER_2_MINUTES` | Default 120 (2h) |
 | `ADMIN_REMINDER_MINUTES` | Default 60 |
+| `ATTENDANCE_CONFIRMATION_ENABLED` | `true` — ask clients to confirm attendance in reminders |
+| `ATTENDANCE_CONFIRMATION_REMINDER` | `client_1`, `client_2`, or `both` |
 | `GOOGLE_CALENDAR_*` | Optional — see [Google Calendar setup](#google-calendar-setup) below |
 
 Copy from `.env.example`. **Never commit `.env` to git.**
@@ -92,8 +113,68 @@ Copy from `.env.example`. **Never commit `.env` to git.**
 5. **Media** — add photos/video, set cover, toggle client visibility
 6. **Working hours** — set days and times clients can book
 7. **Unavailable dates** — block full days or time ranges
-8. **Bot settings** — auto-confirm, reminders, contact username, language, **👋 Start screen** (custom RU/EN `/start` text and optional photo), Google Calendar
+8. **Bot settings** — auto-confirm, reminders, contact username, language, **🔔 Booking confirmation** (custom question/button texts), **👋 Start screen** (custom RU/EN `/start` text and optional photo), Google Calendar
 9. Test a full client booking end-to-end
+
+### Booking confirmation in reminders
+
+When `ATTENDANCE_CONFIRMATION_ENABLED=true`, client reminders include **Confirm** / **Need to change** buttons (neutral defaults; customizable).
+
+- **Confirm** — saves `confirmed`, notifies all admins
+- **Need to change** — saves `cannot_attend`, notifies admins, offers reschedule / cancel / add reason / keep booking
+- **Add reason** — client sends text (up to 1000 chars), admins are notified
+- Admin booking list shows ✅ / ⚠️ indicators; booking detail shows response status and reason
+
+Set `ATTENDANCE_CONFIRMATION_REMINDER=client_1` (default, ~24h), `client_2` (~2h), or `both`.
+
+Admins can manually send the confirmation question from **📒 Bookings → 🔔 Booking confirmation** (sorted by soonest booking, filters for today / tomorrow / 7 days / no response).
+
+### Custom booking confirmation texts
+
+In **⚙️ Bot settings → 🔔 Booking confirmation**, admins can customize per language (RU/EN):
+
+- Message title and question shown in automatic reminders and manual sends
+- Yes/No button labels
+- Client thank-you message after confirming
+- Admin notification texts when the client confirms or requests changes
+- Preview with inactive buttons; reset to defaults per language
+
+The same texts are used for automatic reminders, manual admin send, and preview — one shared builder in code.
+
+### Reminder test mode and diagnostics
+
+Duplicate reminders are prevented by **datetime columns** on `bookings` (NULL = not sent yet):
+
+| Column | Purpose |
+|--------|---------|
+| `client_reminder_1_sent_at` | First client reminder (or test-mode client reminder) |
+| `client_reminder_2_sent_at` | Second client reminder |
+| `admin_reminder_sent_at` | Admin reminder |
+
+Legacy boolean columns (`reminder_24h_sent`, `reminder_2h_sent`, `admin_reminder_sent`) may exist in old SQLite DBs but are **not** used by the scheduler.
+
+**Do not query** non-existent names like `client_reminder_1_sent`. Use the diagnostic script:
+
+```bash
+python scripts/check_reminders.py
+```
+
+Inside Docker:
+
+```bash
+docker compose exec booking-bot python scripts/check_reminders.py
+```
+
+Optional SQLite example (correct column names):
+
+```sql
+SELECT id, start_at, client_reminder_1_sent_at, client_reminder_2_sent_at, admin_reminder_sent_at
+FROM bookings
+WHERE status IN ('pending', 'confirmed')
+ORDER BY start_at;
+```
+
+In **⚙️ Bot settings → 🧪 Test mode**, use **Send test reminder for nearest booking** for immediate Telegram delivery without waiting for the scheduler window.
 
 ---
 

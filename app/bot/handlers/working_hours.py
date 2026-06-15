@@ -5,6 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.utils.callbacks import safe_callback_answer
+from app.bot.utils.telegram_ui import safe_edit_text
 
 from app.bot.i18n import CANCEL_TEXTS, t, weekday_name
 from app.bot.keyboards import ADMIN_WH_TEXTS, admin_menu, cancel_kb
@@ -76,7 +77,7 @@ async def show_working_hours_menu(event: Message | CallbackQuery, lang: str) -> 
     text = await build_working_hours_main_text(lang)
     keyboard = working_hours_main_kb(lang)
     if isinstance(event, CallbackQuery):
-        await event.message.edit_text(text, reply_markup=keyboard)
+        await safe_edit_text(event.message,text, reply_markup=keyboard)
     else:
         await event.answer(text, reply_markup=keyboard)
 
@@ -123,7 +124,7 @@ async def wh_day_detail(callback: CallbackQuery, is_admin: bool, lang: str) -> N
     day = int(callback.data.split(":")[2])
     async with async_session_factory() as session:
         schedule = await get_day_schedule(session, day)
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         format_day_detail(schedule, lang),
         reply_markup=working_hours_day_kb(day, schedule.is_working, lang),
     )
@@ -139,7 +140,7 @@ async def wh_day_toggle(callback: CallbackQuery, is_admin: bool, lang: str) -> N
         await toggle_day(session, day)
         await session.commit()
         schedule = await get_day_schedule(session, day)
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         format_day_detail(schedule, lang),
         reply_markup=working_hours_day_kb(day, schedule.is_working, lang),
     )
@@ -151,7 +152,7 @@ async def wh_day_time_presets(callback: CallbackQuery, is_admin: bool, lang: str
     if not is_admin:
         return
     day = int(callback.data.split(":")[3])
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         t(lang, "wh_choose_time"),
         reply_markup=working_hours_time_presets_kb(day, lang),
     )
@@ -170,7 +171,7 @@ async def wh_day_set_preset(callback: CallbackQuery, is_admin: bool, lang: str) 
         await set_day_working_hours(session, day, start, end)
         await session.commit()
         schedule = await get_day_schedule(session, day)
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         format_day_detail(schedule, lang),
         reply_markup=working_hours_day_kb(day, schedule.is_working, lang),
     )
@@ -217,7 +218,7 @@ async def wh_day_manual_save(message: Message, state: FSMContext, lang: str) -> 
 async def wh_presets_menu(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         t(lang, "wh_presets_title"),
         reply_markup=working_hours_presets_kb(lang),
     )
@@ -240,7 +241,7 @@ async def wh_apply_preset(callback: CallbackQuery, is_admin: bool, lang: str) ->
 async def wh_week_off_confirm(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
-    await callback.message.edit_text(
+    await safe_edit_text(callback.message,
         t(lang, "wh_week_off_confirm_text"),
         reply_markup=working_hours_week_off_confirm_kb(lang),
     )

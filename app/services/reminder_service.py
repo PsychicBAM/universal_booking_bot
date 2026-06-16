@@ -22,6 +22,7 @@ from app.services.reminder_matching import is_reminder_due, reminder_window_labe
 from app.services.reminder_settings import ReminderConfig, load_reminder_config
 from app.utils.datetime_utils import now_local, to_local_naive
 from app.utils.formatting import format_datetime
+from app.utils.perf_logging import log_action_timing
 
 logger = logging.getLogger(__name__)
 

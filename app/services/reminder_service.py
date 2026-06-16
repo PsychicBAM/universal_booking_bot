@@ -41,6 +41,18 @@ class ReminderService:
         self.bot = bot
         self.settings = get_settings()
 
+    @staticmethod
+    def _log_process_timing(*, processed: int, errors: int, started_at: float) -> None:
+        try:
+            log_action_timing(
+                "reminder run",
+                processed=processed,
+                errors=errors,
+                total=time.perf_counter() - started_at,
+            )
+        except Exception:
+            logger.exception("Reminder timing log failed (reminder job completed)")
+
     async def process_reminders(self) -> None:
         t_total = time.perf_counter()
         processed = 0
@@ -71,13 +83,11 @@ class ReminderService:
                         )
 
                 await session.commit()
+        except Exception:
+            errors += 1
+            logger.exception("Reminder job failed")
         finally:
-            log_action_timing(
-                "reminder run",
-                processed=processed,
-                errors=errors,
-                total=time.perf_counter() - t_total,
-            )
+            self._log_process_timing(processed=processed, errors=errors, started_at=t_total)
 
     def _log_run_header(self, config: ReminderConfig, now: datetime, booking_count: int) -> None:
         if config.test_mode:

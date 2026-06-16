@@ -40,6 +40,7 @@ from app.services.booking_service import BookingService
 from app.services.language_service import get_user_language
 from app.services.service_media_service import build_admin_service_detail
 from app.utils.formatting import format_booking, parse_time
+from app.utils.perf_logging import log_action_timing
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -682,8 +683,6 @@ async def admin_confirm_booking(callback: CallbackQuery, is_admin: bool, lang: s
             t_notify = time.perf_counter() - t0
         except Exception:
             pass
-    from app.utils.perf_logging import log_action_timing
-
     log_action_timing(
         "admin confirm booking",
         booking_id=booking_id,

@@ -12,6 +12,83 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+def _check_symbol_imports(app_dir: Path) -> None:
+    rules = [
+        ("log_action_timing(", "log_action_timing", "app.utils.perf_logging"),
+        ("schedule_background_task(", "schedule_background_task", "app.utils.background_tasks"),
+        ("safe_callback_answer(", "safe_callback_answer", "app.bot.utils.callbacks"),
+        (
+            "send_attendance_question_to_client(",
+            "send_attendance_question_to_client",
+            "app.services.admin_attendance_service",
+        ),
+        (
+            "notify_admins_client_cancelled(",
+            "notify_admins_client_cancelled",
+            "app.services.booking_notification_service",
+        ),
+        ("edit_or_send(", "edit_or_send", "app.bot.utils.telegram_ui"),
+        ("safe_edit_text(", "safe_edit_text", "app.bot.utils.telegram_ui"),
+    ]
+    skip_def_files = {
+        "perf_logging.py",
+        "background_tasks.py",
+        "callbacks.py",
+        "admin_attendance_service.py",
+        "booking_notification_service.py",
+        "telegram_ui.py",
+    }
+    for path in app_dir.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for call, symbol, module_path in rules:
+            if call not in text:
+                continue
+            if path.name in skip_def_files:
+                continue
+            if f"def {symbol}" in text:
+                continue
+            if f"import {symbol}" in text:
+                continue
+            if f"from {module_path} import" in text and symbol in text:
+                continue
+            raise AssertionError(f"{path.relative_to(ROOT)}: uses {symbol} without import/def")
+
+
+def _check_callback_prefix_handlers() -> None:
+    handlers_dir = ROOT / "app" / "bot" / "handlers"
+    handlers_blob = "\n".join(
+        path.read_text(encoding="utf-8") for path in handlers_dir.glob("*.py")
+    )
+    required_snippets = [
+        'cb:book:',
+        'cb:loc:',
+        "date:",
+        "time:",
+        "bk:period:",
+        "bk:back:",
+        "my:view:",
+        "my:cancel:",
+        "adm_confirm:",
+        "adm_cancel:",
+        "adm_msg:",
+        "adm_att:",
+        "adm_book:",
+        'F.data == "cancel"',
+        "confirm:yes",
+        "bkdata:",
+        "att:",
+        "sup:",
+        "wh:",
+        "unav:",
+        "sch:",
+        "conf:",
+        "set:",
+    ]
+    missing = [snippet for snippet in required_snippets if snippet not in handlers_blob]
+    if missing:
+        raise AssertionError(f"Missing handler references for callbacks: {', '.join(missing)}")
+
+
 def main() -> int:
     print("=== Project check ===")
 
@@ -915,6 +992,42 @@ def main() -> int:
     sample = normalize_slot.__name__
     print(f"TIMEZONE={settings.timezone}")
     print(f"normalize_slot={sample} (from app.utils.datetime_utils)")
+
+    try:
+        _check_symbol_imports(ROOT / "app")
+        print("OK: common symbol imports")
+    except Exception as exc:
+        print(f"FAIL: symbol import audit — {exc}")
+        return 1
+
+    try:
+        _check_callback_prefix_handlers()
+        print("OK: callback prefix handler audit")
+    except Exception as exc:
+        print(f"FAIL: callback prefix audit — {exc}")
+        return 1
+
+    try:
+        import app.services.reminder_service as reminder_service_module
+
+        if not hasattr(reminder_service_module, "log_action_timing"):
+            raise AssertionError("reminder_service must import log_action_timing")
+        print("OK: ReminderService log_action_timing import")
+    except Exception as exc:
+        print(f"FAIL: ReminderService import audit — {exc}")
+        return 1
+
+    try:
+        import scripts.smoke_e2e as smoke_e2e
+
+        smoke_code = smoke_e2e.main()
+        if smoke_code != 0:
+            print("FAIL: scripts/smoke_e2e.py")
+            return smoke_code
+        print("OK: smoke E2E")
+    except Exception as exc:
+        print(f"FAIL: smoke E2E — {exc}")
+        return 1
 
     try:
         import app.main  # noqa: F401

@@ -119,6 +119,21 @@ class WorkingHours(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class WorkingBreak(Base):
+    __tablename__ = "working_breaks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    weekday: Mapped[int] = mapped_column(Integer, nullable=False, index=True)  # 0=Monday .. 6=Sunday
+    start_time: Mapped[time] = mapped_column(Time, nullable=False)
+    end_time: Mapped[time] = mapped_column(Time, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class UnavailableDate(Base):
     __tablename__ = "unavailable_dates"
 

@@ -61,6 +61,7 @@ from app.repositories import (
     SettingsRepository,
     UnavailableRepository,
     WorkingHoursRepository,
+    WorkingBreakRepository,
 )
 from app.bot.keyboards.service_location_kb import client_locations_kb
 from app.services.service_media_service import send_service_presentation
@@ -173,6 +174,7 @@ async def _start_date_selection(
                     UnavailableRepository(session),
                     BookingRepository(session),
                     CalendarService(session),
+                    WorkingBreakRepository(session),
                 )
                 dates = await availability.get_available_dates(
                     service_id, ServiceRepository(session)
@@ -347,6 +349,7 @@ async def _fetch_slots_for_date(service_id: int, target_date) -> list:
             UnavailableRepository(session),
             BookingRepository(session),
             CalendarService(session),
+            WorkingBreakRepository(session),
         )
         return await availability.get_available_slots(
             service_id, target_date, ServiceRepository(session)
@@ -370,6 +373,7 @@ async def _show_dates_screen(
             UnavailableRepository(session),
             BookingRepository(session),
             CalendarService(session),
+            WorkingBreakRepository(session),
         )
         dates = await availability.get_available_dates(service_id, ServiceRepository(session))
 

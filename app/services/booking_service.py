@@ -13,6 +13,7 @@ from app.repositories import (
     SettingsRepository,
     UnavailableRepository,
     WorkingHoursRepository,
+    WorkingBreakRepository,
 )
 from app.services.availability_service import AvailabilityService
 from app.services.booking_lock import booking_lock_manager
@@ -57,6 +58,7 @@ class BookingService:
             unavailable_repo=UnavailableRepository(session),
             booking_repo=self.booking_repo,
             calendar_service=self.calendar_service,
+            working_breaks_repo=WorkingBreakRepository(session),
         )
 
     async def _assert_slot_available_for_write(

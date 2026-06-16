@@ -55,6 +55,16 @@ class AdminWorkingHoursStates(StatesGroup):
     manual_time = State()
 
 
+class WorkingBreakStates(StatesGroup):
+    choosing_weekday = State()
+    entering_start = State()
+    entering_end = State()
+    entering_title = State()
+    editing_start = State()
+    editing_end = State()
+    editing_title = State()
+
+
 class AdminUnavailableStates(StatesGroup):
     manual_date = State()
     manual_time = State()

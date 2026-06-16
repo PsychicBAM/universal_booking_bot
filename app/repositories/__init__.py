@@ -17,6 +17,7 @@ from app.models import (
     SupportMessageStatus,
     UnavailableDate,
     UnavailableTimeRange,
+    WorkingBreak,
     WorkingHours,
 )
 
@@ -303,6 +304,110 @@ class WorkingHoursRepository:
         wh = result.scalar_one_or_none()
         if wh:
             wh.is_active = False
+
+
+class WorkingBreakRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def list_by_weekday(self, weekday: int, *, active_only: bool = True) -> list[WorkingBreak]:
+        stmt = select(WorkingBreak).where(WorkingBreak.weekday == weekday)
+        if active_only:
+            stmt = stmt.where(WorkingBreak.is_active.is_(True))
+        stmt = stmt.order_by(WorkingBreak.start_time)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def list_all(self, *, active_only: bool = True) -> list[WorkingBreak]:
+        stmt = select(WorkingBreak).order_by(WorkingBreak.weekday, WorkingBreak.start_time)
+        if active_only:
+            stmt = stmt.where(WorkingBreak.is_active.is_(True))
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_id(self, break_id: int) -> WorkingBreak | None:
+        result = await self.session.execute(
+            select(WorkingBreak).where(WorkingBreak.id == break_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def _find_duplicate(
+        self, weekday: int, start_time, end_time, exclude_id: int | None = None
+    ) -> WorkingBreak | None:
+        stmt = select(WorkingBreak).where(
+            WorkingBreak.weekday == weekday,
+            WorkingBreak.start_time == start_time,
+            WorkingBreak.end_time == end_time,
+        )
+        if exclude_id is not None:
+            stmt = stmt.where(WorkingBreak.id != exclude_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def create_break(
+        self,
+        weekday: int,
+        start_time,
+        end_time,
+        title: str | None = None,
+        *,
+        working_hours_repo: WorkingHoursRepository | None = None,
+    ) -> WorkingBreak:
+        from app.services.working_break_service import validate_break_for_day
+
+        wh_repo = working_hours_repo or WorkingHoursRepository(self.session)
+        await validate_break_for_day(wh_repo, weekday, start_time, end_time)
+        if await self._find_duplicate(weekday, start_time, end_time):
+            raise ValueError("duplicate_break")
+        br = WorkingBreak(
+            weekday=weekday,
+            start_time=start_time,
+            end_time=end_time,
+            title=title,
+            is_active=True,
+        )
+        self.session.add(br)
+        await self.session.flush()
+        return br
+
+    async def update_break(
+        self,
+        break_id: int,
+        *,
+        start_time=None,
+        end_time=None,
+        title=None,
+        is_active: bool | None = None,
+        working_hours_repo: WorkingHoursRepository | None = None,
+    ) -> WorkingBreak | None:
+        from app.services.working_break_service import validate_break_for_day
+
+        br = await self.get_by_id(break_id)
+        if not br:
+            return None
+        new_start = start_time if start_time is not None else br.start_time
+        new_end = end_time if end_time is not None else br.end_time
+        if start_time is not None or end_time is not None:
+            wh_repo = working_hours_repo or WorkingHoursRepository(self.session)
+            await validate_break_for_day(wh_repo, br.weekday, new_start, new_end)
+            if await self._find_duplicate(br.weekday, new_start, new_end, exclude_id=break_id):
+                raise ValueError("duplicate_break")
+            br.start_time = new_start
+            br.end_time = new_end
+        if title is not None:
+            br.title = title or None
+        if is_active is not None:
+            br.is_active = is_active
+        await self.session.flush()
+        return br
+
+    async def delete_break(self, break_id: int) -> bool:
+        br = await self.get_by_id(break_id)
+        if not br:
+            return False
+        await self.session.delete(br)
+        await self.session.flush()
+        return True
 
 
 class UnavailableRepository:

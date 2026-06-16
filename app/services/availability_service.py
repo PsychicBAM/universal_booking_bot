@@ -4,11 +4,12 @@ import logging
 import time as perf_time
 
 from app.config import get_settings
-from app.models import Service, WorkingHours
+from app.models import Service, WorkingBreak, WorkingHours
 from app.repositories import (
     BookingRepository,
     ServiceRepository,
     UnavailableRepository,
+    WorkingBreakRepository,
     WorkingHoursRepository,
 )
 from app.services.calendar_service import CalendarService
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class _RangeContext:
     working_hours: dict[int, WorkingHours]
+    working_breaks: list[WorkingBreak]
     unavailable_dates: set[date]
     time_ranges_by_date: dict[date, list[tuple[datetime, datetime]]]
     booking_ranges: list[tuple[datetime, datetime]]
@@ -33,11 +35,13 @@ class AvailabilityService:
         unavailable_repo: UnavailableRepository,
         booking_repo: BookingRepository,
         calendar_service: CalendarService,
+        working_breaks_repo: WorkingBreakRepository | None = None,
     ) -> None:
         self.working_hours_repo = working_hours_repo
         self.unavailable_repo = unavailable_repo
         self.booking_repo = booking_repo
         self.calendar_service = calendar_service
+        self.working_breaks_repo = working_breaks_repo
         self.settings = get_settings()
 
     async def get_available_dates(
@@ -178,6 +182,11 @@ class AvailabilityService:
 
         return _RangeContext(
             working_hours=working_hours,
+            working_breaks=(
+                await self.working_breaks_repo.list_all(active_only=True)
+                if self.working_breaks_repo
+                else []
+            ),
             unavailable_dates=unavailable_dates,
             time_ranges_by_date=time_ranges_by_date,
             booking_ranges=booking_ranges,
@@ -219,6 +228,14 @@ class AvailabilityService:
         ctx: _RangeContext,
     ) -> list[tuple[datetime, datetime]]:
         ranges = list(ctx.time_ranges_by_date.get(target_date, []))
+        for br in ctx.working_breaks:
+            if br.weekday == target_date.weekday() and br.is_active:
+                ranges.append(
+                    (
+                        datetime.combine(target_date, br.start_time),
+                        datetime.combine(target_date, br.end_time),
+                    )
+                )
         for blocked_start, blocked_end in ctx.booking_ranges:
             if blocked_start < day_end and blocked_end > day_start:
                 ranges.append((blocked_start, blocked_end))
@@ -248,6 +265,17 @@ class AvailabilityService:
                     datetime.combine(target_date, item.end_time),
                 )
             )
+
+        if self.working_breaks_repo:
+            for br in await self.working_breaks_repo.list_by_weekday(
+                target_date.weekday(), active_only=True
+            ):
+                ranges.append(
+                    (
+                        datetime.combine(target_date, br.start_time),
+                        datetime.combine(target_date, br.end_time),
+                    )
+                )
 
         bookings = await self.booking_repo.list_active_between(day_start, day_end)
         buffer_map = await service_repo.buffer_minutes_by_id()

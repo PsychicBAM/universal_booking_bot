@@ -10,7 +10,9 @@ from app.bot.keyboards.schedule_kb import schedule_main_kb, schedule_quick_kb
 from app.bot.utils.callbacks import safe_callback_answer
 from app.bot.utils.telegram_ui import edit_or_send, safe_edit_text
 from app.database.session import async_session_factory
+from app.repositories import WorkingBreakRepository
 from app.services.unavailable_service import list_upcoming_unavailable
+from app.services.working_break_service import breaks_by_weekday
 from app.services.working_hours_service import get_weekly_schedule
 
 router = Router()
@@ -19,10 +21,11 @@ router = Router()
 async def build_schedule_main_text(lang: str) -> str:
     async with async_session_factory() as session:
         schedules = await get_weekly_schedule(session)
+        breaks_map = await breaks_by_weekday(WorkingBreakRepository(session), active_only=True)
         items = await list_upcoming_unavailable(session)
 
     lines = [t(lang, "schedule_title"), "", t(lang, "schedule_wh_section")]
-    lines.append(format_schedule_text(schedules, lang))
+    lines.append(format_schedule_text(schedules, lang, breaks_map))
     lines.extend(["", t(lang, "schedule_unav_section")])
     if items:
         for item in items[:7]:

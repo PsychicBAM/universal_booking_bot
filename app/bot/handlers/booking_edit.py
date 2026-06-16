@@ -27,6 +27,7 @@ from app.repositories import (
     ServiceRepository,
     UnavailableRepository,
     WorkingHoursRepository,
+    WorkingBreakRepository,
 )
 from app.services.availability_service import AvailabilityService
 from app.services.booking_notification_service import notify_admins_client_cancelled
@@ -47,6 +48,7 @@ def _availability_service(session):
         UnavailableRepository(session),
         BookingRepository(session),
         CalendarService(session),
+        WorkingBreakRepository(session),
     )
 
 

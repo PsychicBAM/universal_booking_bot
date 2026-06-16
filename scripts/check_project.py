@@ -79,6 +79,7 @@ def _check_callback_prefix_handlers() -> None:
         "att:",
         "sup:",
         "wh:",
+        "br:",
         "unav:",
         "sch:",
         "conf:",
@@ -986,6 +987,119 @@ def main() -> int:
         print("OK: aware->naive datetime comparison safe")
     except Exception as exc:
         print(f"FAIL: datetime normalization regression — {exc}")
+        return 1
+
+    try:
+        from datetime import date, datetime, time, timedelta
+        from types import SimpleNamespace
+
+        from app.bot.handlers.working_hours import format_day_detail
+        from app.services.availability_service import AvailabilityService, _RangeContext
+        from app.services.working_break_service import (
+            format_schedule_day_with_breaks,
+            parse_hhmm,
+            validate_time_range,
+        )
+        from app.services.working_hours_service import DaySchedule
+
+        lunch_break = SimpleNamespace(
+            weekday=0,
+            start_time=time(12, 0),
+            end_time=time(13, 0),
+            title="Обед",
+            is_active=True,
+        )
+        schedule = DaySchedule(day_of_week=0, is_working=True, start_time=time(9, 0), end_time=time(18, 0))
+        day_text = format_day_detail(schedule, "ru", [lunch_break])
+        if "12:00–13:00" not in day_text or "Обед" not in day_text:
+            raise AssertionError("test A — break on working hours day screen")
+
+        monday = date(2026, 6, 15)
+        ctx = _RangeContext(
+            working_hours={
+                0: SimpleNamespace(start_time=time(9, 0), end_time=time(18, 0), is_active=True)
+            },
+            working_breaks=[lunch_break],
+            unavailable_dates=set(),
+            time_ranges_by_date={},
+            booking_ranges=[],
+            google_busy_ranges=[],
+        )
+        day_start = datetime.combine(monday, time(9, 0))
+        day_end = datetime.combine(monday, time(18, 0))
+        blocked = AvailabilityService._blocked_ranges_for_day(monday, day_start, day_end, ctx)
+
+        slot_12 = datetime.combine(monday, time(12, 0))
+        if not AvailabilityService._overlaps_any(
+            slot_12, slot_12 + timedelta(minutes=30), blocked
+        ):
+            raise AssertionError("test B — 12:00 slot blocked by break")
+
+        slot_1230 = datetime.combine(monday, time(12, 30))
+        if not AvailabilityService._overlaps_any(
+            slot_1230, slot_1230 + timedelta(minutes=30), blocked
+        ):
+            raise AssertionError("test B — 12:30 slot blocked by break")
+
+        slot_1130 = datetime.combine(monday, time(11, 30))
+        if not AvailabilityService._overlaps_any(
+            slot_1130, slot_1130 + timedelta(minutes=60), blocked
+        ):
+            raise AssertionError("test C — 11:30–12:30 slot blocked by break overlap")
+
+        ctx_no_breaks = _RangeContext(
+            working_hours=ctx.working_hours,
+            working_breaks=[],
+            unavailable_dates=set(),
+            time_ranges_by_date={},
+            booking_ranges=[],
+            google_busy_ranges=[],
+        )
+        blocked_after_delete = AvailabilityService._blocked_ranges_for_day(
+            monday, day_start, day_end, ctx_no_breaks
+        )
+        if AvailabilityService._overlaps_any(
+            slot_12, slot_12 + timedelta(minutes=30), blocked_after_delete
+        ):
+            raise AssertionError("test D — slots should return after break removal")
+
+        try:
+            validate_time_range(time(13, 0), time(12, 0))
+            raise AssertionError("test E — invalid range should raise")
+        except ValueError:
+            pass
+
+        summary = format_schedule_day_with_breaks("ru", 0, "09:00", "18:00", [lunch_break])
+        if "Пн: 09:00–18:00 · перерыв 12:00–13:00" not in summary:
+            raise AssertionError(f"test F — schedule summary unexpected: {summary!r}")
+
+        busy_start = datetime.combine(monday, time(15, 0))
+        busy_end = datetime.combine(monday, time(16, 0))
+        ctx_mixed = _RangeContext(
+            working_hours=ctx.working_hours,
+            working_breaks=[lunch_break],
+            unavailable_dates={monday + timedelta(days=1)},
+            time_ranges_by_date={
+                monday: [(datetime.combine(monday, time(17, 0)), datetime.combine(monday, time(18, 0)))]
+            },
+            booking_ranges=[(busy_start, busy_end)],
+            google_busy_ranges=[(datetime.combine(monday, time(10, 0)), datetime.combine(monday, time(10, 30)))],
+        )
+        mixed_blocked = AvailabilityService._blocked_ranges_for_day(
+            monday, day_start, day_end, ctx_mixed
+        )
+        if len(mixed_blocked) < 4:
+            raise AssertionError("test G — unavailable/booking/google ranges must still apply with breaks")
+
+        try:
+            parse_hhmm("25:00")
+            raise AssertionError("test E — invalid HH:MM should fail")
+        except ValueError:
+            pass
+
+        print("OK: working breaks availability and admin UI")
+    except Exception as exc:
+        print(f"FAIL: working breaks — {exc}")
         return 1
 
     settings = get_settings()

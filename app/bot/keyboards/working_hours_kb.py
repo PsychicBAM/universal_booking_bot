@@ -17,13 +17,20 @@ def working_hours_main_kb(lang: str = "ru") -> InlineKeyboardMarkup:
 
 def working_hours_day_kb(day: int, is_working: bool, lang: str = "ru") -> InlineKeyboardMarkup:
     toggle = t(lang, "wh_toggle_to_off") if is_working else t(lang, "wh_toggle_to_on")
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=toggle, callback_data=f"wh:day:toggle:{day}")],
-            [InlineKeyboardButton(text=t(lang, "wh_change_time"), callback_data=f"wh:day:time:{day}")],
-            [InlineKeyboardButton(text=t(lang, "wh_back_schedule"), callback_data="wh:list")],
-        ]
-    )
+    rows = [
+        [InlineKeyboardButton(text=toggle, callback_data=f"wh:day:toggle:{day}")],
+        [InlineKeyboardButton(text=t(lang, "wh_change_time"), callback_data=f"wh:day:time:{day}")],
+    ]
+    if is_working:
+        rows.extend(
+            [
+                [InlineKeyboardButton(text=t(lang, "working_break_add"), callback_data=f"br:add:{day}")],
+                [InlineKeyboardButton(text=t(lang, "working_break_edit"), callback_data=f"br:list:{day}")],
+                [InlineKeyboardButton(text=t(lang, "working_break_delete"), callback_data=f"br:list:{day}")],
+            ]
+        )
+    rows.append([InlineKeyboardButton(text=t(lang, "wh_back_schedule"), callback_data="wh:list")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def working_hours_time_presets_kb(day: int, lang: str = "ru") -> InlineKeyboardMarkup:

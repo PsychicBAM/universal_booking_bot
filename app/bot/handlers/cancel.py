@@ -18,6 +18,7 @@ from app.bot.states import (
     AdminSupportStates,
     AdminUnavailableStates,
     AdminWorkingHoursStates,
+    WorkingBreakStates,
     AttendanceStates,
     ClientBookingEditStates,
     ClientSupportStates,
@@ -30,6 +31,7 @@ ADMIN_STATE_PREFIXES = (
     "AdminServiceMediaStates",
     "AdminServiceLocationStates",
     "AdminWorkingHoursStates",
+    "WorkingBreakStates",
     "AdminUnavailableStates",
     "AdminMessageStates",
     "AdminSettingsStates",
@@ -80,6 +82,27 @@ async def global_cancel(message: Message, state: FSMContext, is_admin: bool, lan
         from app.bot.handlers.working_hours import send_working_hours_main
 
         await send_working_hours_main(message, lang)
+        return
+
+    if current and current.startswith("WorkingBreakStates"):
+        data = await state.get_data()
+        weekday = data.get("br_weekday")
+        break_id = data.get("br_break_id")
+        await state.clear()
+        await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
+        from app.bot.handlers.working_hours import send_day_detail_message, send_working_hours_main
+        from app.database.session import async_session_factory
+        from app.repositories import WorkingBreakRepository
+
+        if break_id is not None:
+            async with async_session_factory() as session:
+                br = await WorkingBreakRepository(session).get_by_id(break_id)
+            if br:
+                weekday = br.weekday
+        if weekday is not None:
+            await send_day_detail_message(message, int(weekday), lang)
+        else:
+            await send_working_hours_main(message, lang)
         return
 
     if current.startswith("AdminUnavailableStates"):

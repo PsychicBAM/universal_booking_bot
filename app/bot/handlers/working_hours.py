@@ -18,6 +18,12 @@ from app.bot.keyboards.working_hours_kb import (
 )
 from app.bot.states import AdminWorkingHoursStates
 from app.database.session import async_session_factory
+from app.repositories import WorkingBreakRepository
+from app.services.working_break_service import (
+    breaks_by_weekday,
+    format_breaks_section,
+    format_schedule_day_with_breaks,
+)
 from app.services.working_hours_service import (
     DAY_TIME_PRESETS,
     DaySchedule,
@@ -35,42 +41,84 @@ router = Router()
 TIME_RANGE_RE = re.compile(r"^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$")
 
 
-def format_schedule_text(schedules: list[DaySchedule], lang: str) -> str:
+def format_schedule_text(
+    schedules: list[DaySchedule],
+    lang: str,
+    breaks_map: dict[int, list] | None = None,
+) -> str:
     lines = [t(lang, "wh_current_schedule")]
+    breaks_map = breaks_map or {}
     for schedule in schedules:
         day = weekday_name(lang, schedule.day_of_week)
         if schedule.is_working and schedule.start_time and schedule.end_time:
-            lines.append(
-                t(
-                    lang,
-                    "wh_day_line_working",
-                    day=day,
-                    start=schedule.start_time.strftime("%H:%M"),
-                    end=schedule.end_time.strftime("%H:%M"),
+            day_breaks = breaks_map.get(schedule.day_of_week, [])
+            if breaks_map:
+                lines.append(
+                    format_schedule_day_with_breaks(
+                        lang,
+                        schedule.day_of_week,
+                        schedule.start_time.strftime("%H:%M"),
+                        schedule.end_time.strftime("%H:%M"),
+                        day_breaks,
+                    )
                 )
-            )
+            else:
+                lines.append(
+                    t(
+                        lang,
+                        "wh_day_line_working",
+                        day=day,
+                        start=schedule.start_time.strftime("%H:%M"),
+                        end=schedule.end_time.strftime("%H:%M"),
+                    )
+                )
         else:
             lines.append(t(lang, "wh_day_line_off", day=day))
     return "\n".join(lines)
 
 
-def format_day_detail(schedule: DaySchedule, lang: str) -> str:
+def format_day_detail(schedule: DaySchedule, lang: str, breaks: list | None = None) -> str:
     day = weekday_name(lang, schedule.day_of_week)
-    if schedule.is_working and schedule.start_time and schedule.end_time:
-        return t(
-            lang,
-            "wh_day_detail_working",
-            day=day,
-            start=schedule.start_time.strftime("%H:%M"),
-            end=schedule.end_time.strftime("%H:%M"),
-        )
-    return t(lang, "wh_day_detail_off", day=day)
+    if not (schedule.is_working and schedule.start_time and schedule.end_time):
+        return t(lang, "wh_day_detail_off", day=day)
+    lines = [
+        day,
+        "",
+        t(lang, "wh_working_hours_label"),
+        f"{schedule.start_time.strftime('%H:%M')}–{schedule.end_time.strftime('%H:%M')}",
+        "",
+        t(lang, "working_breaks_title") + ":",
+        format_breaks_section(breaks or [], lang),
+    ]
+    return "\n".join(lines)
+
+
+async def show_day_detail(callback: CallbackQuery, day: int, lang: str) -> None:
+    async with async_session_factory() as session:
+        schedule = await get_day_schedule(session, day)
+        breaks = await WorkingBreakRepository(session).list_by_weekday(day, active_only=False)
+    await safe_edit_text(
+        callback.message,
+        format_day_detail(schedule, lang, breaks),
+        reply_markup=working_hours_day_kb(day, schedule.is_working, lang),
+    )
+
+
+async def send_day_detail_message(message: Message, day: int, lang: str) -> None:
+    async with async_session_factory() as session:
+        schedule = await get_day_schedule(session, day)
+        breaks = await WorkingBreakRepository(session).list_by_weekday(day, active_only=False)
+    await message.answer(
+        format_day_detail(schedule, lang, breaks),
+        reply_markup=working_hours_day_kb(day, schedule.is_working, lang),
+    )
 
 
 async def build_working_hours_main_text(lang: str) -> str:
     async with async_session_factory() as session:
         schedules = await get_weekly_schedule(session)
-    return f"{t(lang, 'wh_title')}\n\n{format_schedule_text(schedules, lang)}"
+        breaks_map = await breaks_by_weekday(WorkingBreakRepository(session), active_only=True)
+    return f"{t(lang, 'wh_title')}\n\n{format_schedule_text(schedules, lang, breaks_map)}"
 
 
 async def show_working_hours_menu(event: Message | CallbackQuery, lang: str) -> None:
@@ -125,12 +173,7 @@ async def wh_day_detail(callback: CallbackQuery, is_admin: bool, lang: str) -> N
     if not is_admin:
         return
     day = int(callback.data.split(":")[2])
-    async with async_session_factory() as session:
-        schedule = await get_day_schedule(session, day)
-    await safe_edit_text(callback.message,
-        format_day_detail(schedule, lang),
-        reply_markup=working_hours_day_kb(day, schedule.is_working, lang),
-    )
+    await show_day_detail(callback, day, lang)
     await safe_callback_answer(callback)
 
 
@@ -142,11 +185,7 @@ async def wh_day_toggle(callback: CallbackQuery, is_admin: bool, lang: str) -> N
     async with async_session_factory() as session:
         await toggle_day(session, day)
         await session.commit()
-        schedule = await get_day_schedule(session, day)
-    await safe_edit_text(callback.message,
-        format_day_detail(schedule, lang),
-        reply_markup=working_hours_day_kb(day, schedule.is_working, lang),
-    )
+    await show_day_detail(callback, day, lang)
     await safe_callback_answer(callback, t(lang, "wh_updated"))
 
 
@@ -173,11 +212,7 @@ async def wh_day_set_preset(callback: CallbackQuery, is_admin: bool, lang: str) 
     async with async_session_factory() as session:
         await set_day_working_hours(session, day, start, end)
         await session.commit()
-        schedule = await get_day_schedule(session, day)
-    await safe_edit_text(callback.message,
-        format_day_detail(schedule, lang),
-        reply_markup=working_hours_day_kb(day, schedule.is_working, lang),
-    )
+    await show_day_detail(callback, day, lang)
     await safe_callback_answer(callback, t(lang, "wh_updated"))
 
 
@@ -209,12 +244,8 @@ async def wh_day_manual_save(message: Message, state: FSMContext, lang: str) -> 
     async with async_session_factory() as session:
         await set_day_working_hours(session, day, start, end)
         await session.commit()
-        schedule = await get_day_schedule(session, day)
     await state.clear()
-    await message.answer(
-        format_day_detail(schedule, lang),
-        reply_markup=working_hours_day_kb(day, schedule.is_working, lang),
-    )
+    await send_day_detail_message(message, day, lang)
 
 
 @router.callback_query(F.data == "wh:presets")

@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import time as perf_time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -11,6 +12,8 @@ from app.repositories import SettingsRepository
 from app.utils.datetime_utils import now_local, to_aware_local, to_local_naive
 
 logger = logging.getLogger(__name__)
+
+_busy_ranges_cache: dict[tuple[str, str, str], tuple[float, list[tuple[datetime, datetime]]]] = {}
 
 
 @dataclass(frozen=True)
@@ -182,6 +185,7 @@ class CalendarService:
                 ", ".join(missing),
             )
             return []
+        cache_key: tuple[str, str, str] | None = None
         try:
             refresh_token = await self._get_refresh_token()
             service = self._build_service(refresh_token)
@@ -190,6 +194,20 @@ class CalendarService:
             calendar_id = await self._get_calendar_id()
             start_aware = to_aware_local(start)
             end_aware = to_aware_local(end)
+            cache_key = (calendar_id, start_aware.isoformat(), end_aware.isoformat())
+            cache_ttl = self.settings.google_calendar_busy_cache_seconds
+            now_mono = perf_time.monotonic()
+            cached_entry = _busy_ranges_cache.get(cache_key)
+            if cached_entry and (now_mono - cached_entry[0]) < cache_ttl:
+                logger.debug(
+                    "Google busy ranges cache hit: calendar=%s range=%s—%s age=%.1fs",
+                    calendar_id,
+                    start.date(),
+                    end.date(),
+                    now_mono - cached_entry[0],
+                )
+                return list(cached_entry[1])
+
             body = {
                 "timeMin": start_aware.isoformat(),
                 "timeMax": end_aware.isoformat(),
@@ -208,7 +226,7 @@ class CalendarService:
 
             timeout = timeout_seconds or self.settings.google_calendar_busy_timeout_seconds
             try:
-                return await asyncio.wait_for(asyncio.to_thread(_fetch_busy), timeout=timeout)
+                ranges = await asyncio.wait_for(asyncio.to_thread(_fetch_busy), timeout=timeout)
             except asyncio.TimeoutError:
                 logger.warning(
                     "Google Calendar freebusy timed out after %.1fs (range %s — %s)",
@@ -216,9 +234,22 @@ class CalendarService:
                     start.date(),
                     end.date(),
                 )
+                if cached_entry:
+                    logger.warning("Using stale Google busy ranges cache after timeout")
+                    return list(cached_entry[1])
                 return []
+            _busy_ranges_cache[cache_key] = (perf_time.monotonic(), ranges)
+            if len(_busy_ranges_cache) > 128:
+                oldest_key = min(_busy_ranges_cache, key=lambda key: _busy_ranges_cache[key][0])
+                _busy_ranges_cache.pop(oldest_key, None)
+            return ranges
         except Exception as exc:
             self._log_api_error("freebusy query", exc)
+            if cache_key is not None:
+                stale = _busy_ranges_cache.get(cache_key)
+                if stale:
+                    logger.warning("Using stale Google busy ranges cache after API error")
+                    return list(stale[1])
             return []
 
     async def create_event(
@@ -260,8 +291,20 @@ class CalendarService:
             }
             if location:
                 event["location"] = location
-            created = service.events().insert(calendarId=calendar_id, body=event).execute()
-            event_id = created.get("id")
+
+            def _insert() -> str | None:
+                created = service.events().insert(calendarId=calendar_id, body=event).execute()
+                return created.get("id")
+
+            timeout = self.settings.google_calendar_api_timeout_seconds
+            try:
+                event_id = await asyncio.wait_for(asyncio.to_thread(_insert), timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Google Calendar event create timed out after %.1fs",
+                    timeout,
+                )
+                return None
             if event_id:
                 logger.info("Google Calendar event created: %s", event_id)
             return event_id
@@ -320,7 +363,17 @@ class CalendarService:
                 return event_id
 
             try:
-                return await asyncio.to_thread(_patch)
+                return await asyncio.wait_for(
+                    asyncio.to_thread(_patch),
+                    timeout=self.settings.google_calendar_api_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Google Calendar event update timed out after %.1fs event_id=%s",
+                    self.settings.google_calendar_api_timeout_seconds,
+                    event_id,
+                )
+                return None
             except Exception as patch_exc:
                 try:
                     from googleapiclient.errors import HttpError
@@ -360,7 +413,20 @@ class CalendarService:
             if not service:
                 return
             calendar_id = await self._get_calendar_id()
-            service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+
+            def _delete() -> None:
+                service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+
+            timeout = self.settings.google_calendar_api_timeout_seconds
+            try:
+                await asyncio.wait_for(asyncio.to_thread(_delete), timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Google Calendar event delete timed out after %.1fs event_id=%s",
+                    timeout,
+                    event_id,
+                )
+                return
             logger.info("Google Calendar event deleted: %s", event_id)
         except Exception as exc:
             try:

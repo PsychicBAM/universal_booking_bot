@@ -25,7 +25,14 @@ from app.bot.keyboards import (
     main_menu,
     services_kb,
     skip_cancel_kb,
-    times_kb,
+)
+from app.bot.keyboards.booking_time_kb import time_grid_kb, time_periods_kb
+from app.bot.utils.time_periods import (
+    Period,
+    build_period_screen_text,
+    build_time_grid_text,
+    group_slots_by_period,
+    non_empty_periods,
 )
 from app.bot.states import BookingStates
 from app.bot.booking_client_data import (
@@ -64,6 +71,7 @@ from app.services.calendar_service import CalendarService
 from app.services.language_service import get_user_language
 from app.utils.datetime_utils import now_local, slot_from_timestamp, to_local_naive
 from app.utils.formatting import format_booking, format_date, format_datetime, format_service, format_time
+from app.utils.perf_logging import log_action_timing
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -207,14 +215,253 @@ async def _start_date_selection(
         reply_markup=dates_kb(dates, lang),
     )
     t_send = time.perf_counter() - t0
-    logger.info(
-        "book timing: answer=%.2fs service=%.2fs availability=%.2fs send=%.2fs total=%.2fs dates=%s",
-        t_answer,
-        t_service,
-        t_availability,
-        t_send,
-        time.perf_counter() - t_total,
-        len(dates),
+    total = time.perf_counter() - t_total
+    log_action_timing(
+        "loading dates",
+        service_id=service_id,
+        db=t_service,
+        availability=t_availability,
+        send=t_send,
+        total=total,
+    )
+
+
+async def _navigate_to_time_selection(
+    callback: CallbackQuery,
+    state: FSMContext,
+    lang: str,
+) -> None:
+    from datetime import date as date_cls
+
+    data = await state.get_data()
+    service_id = data.get("service_id")
+    target_date_raw = data.get("target_date")
+    period = data.get("time_period")
+    if not service_id:
+        await edit_or_send(callback, t(lang, "session_expired"))
+        return
+    if not target_date_raw:
+        await _show_dates_screen(callback, state, lang, service_id)
+        return
+    target_date = date_cls.fromisoformat(target_date_raw)
+    if period in ("morning", "day", "evening"):
+        await _show_time_grid_for_period(
+            callback, state, lang, service_id, target_date, period  # type: ignore[arg-type]
+        )
+        return
+    await _show_period_screen(callback, state, lang, service_id, target_date)
+
+
+async def _show_service_card(
+    callback: CallbackQuery,
+    state: FSMContext,
+    lang: str,
+    bot: Bot,
+    service_id: int,
+) -> None:
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+        if not is_service_bookable(service):
+            await edit_or_send(callback, t(lang, client_service_unavailable_key(service)))
+            return
+        media_items = await ServiceMediaRepository(session).list_for_service(service_id)
+        photos = await ServiceMediaRepository(session).count_photos(service_id)
+        videos = await ServiceMediaRepository(session).count_videos(service_id)
+
+    await state.set_state(BookingStates.choosing_service)
+    chat_id = callback.message.chat.id
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
+
+    if service.show_media_to_clients and media_items:
+        await send_service_presentation(
+            bot,
+            chat_id,
+            service,
+            media_items,
+            lang,
+            photos_count=photos,
+            videos_count=videos,
+            media_mode="open",
+        )
+    else:
+        await send_service_presentation(
+            bot,
+            chat_id,
+            service,
+            media_items,
+            lang,
+            photos_count=photos,
+            videos_count=videos,
+            media_mode="card_only",
+        )
+
+
+async def _show_service_or_location_back(
+    callback: CallbackQuery,
+    state: FSMContext,
+    lang: str,
+    bot: Bot,
+) -> None:
+    data = await state.get_data()
+    service_id = data.get("service_id")
+    if not service_id:
+        await edit_or_send(callback, t(lang, "session_expired"))
+        await state.clear()
+        return
+
+    await state.update_data(
+        target_date=None,
+        time_period=None,
+        slot_ts=None,
+        service_location_id=None,
+        service_location_title=None,
+        service_location_address=None,
+    )
+
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+        if not is_service_bookable(service):
+            await edit_or_send(callback, t(lang, client_service_unavailable_key(service)))
+            return
+        locations = await ServiceLocationRepository(session).list_active_for_service(service_id)
+
+    if locations:
+        await state.set_state(BookingStates.choosing_service_location)
+        await edit_or_send(
+            callback,
+            f"{format_service(service, lang)}\n\n{t(lang, 'choose_service_location')}",
+            reply_markup=client_locations_kb(locations, lang),
+        )
+        return
+
+    await _show_service_card(callback, state, lang, bot, service_id)
+
+
+async def _fetch_slots_for_date(service_id: int, target_date) -> list:
+    async with async_session_factory() as session:
+        availability = AvailabilityService(
+            WorkingHoursRepository(session),
+            UnavailableRepository(session),
+            BookingRepository(session),
+            CalendarService(session),
+        )
+        return await availability.get_available_slots(
+            service_id, target_date, ServiceRepository(session)
+        )
+
+
+async def _show_dates_screen(
+    callback: CallbackQuery,
+    state: FSMContext,
+    lang: str,
+    service_id: int,
+) -> None:
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+        if not is_service_bookable(service):
+            await edit_or_send(callback, t(lang, client_service_unavailable_key(service)))
+            await state.clear()
+            return
+        availability = AvailabilityService(
+            WorkingHoursRepository(session),
+            UnavailableRepository(session),
+            BookingRepository(session),
+            CalendarService(session),
+        )
+        dates = await availability.get_available_dates(service_id, ServiceRepository(session))
+
+    if not dates:
+        await edit_or_send(callback, t(lang, "no_dates"))
+        await state.clear()
+        return
+
+    await state.set_state(BookingStates.choosing_date)
+    await state.update_data(time_period=None)
+    await edit_or_send(
+        callback,
+        f"{format_service(service, lang)}\n\n{t(lang, 'choose_date')}",
+        reply_markup=dates_kb(dates, lang),
+    )
+
+
+async def _show_period_screen(
+    callback: CallbackQuery,
+    state: FSMContext,
+    lang: str,
+    service_id: int,
+    target_date,
+) -> None:
+    t_total = time.perf_counter()
+    t0 = time.perf_counter()
+    slots = await _fetch_slots_for_date(service_id, target_date)
+    t_slots = time.perf_counter() - t0
+
+    if not slots:
+        await edit_or_send(callback, t(lang, "no_slots"))
+        await state.set_state(BookingStates.choosing_date)
+        return
+
+    grouped = group_slots_by_period(slots)
+    available_periods = non_empty_periods(grouped)
+    if not available_periods:
+        await edit_or_send(callback, t(lang, "no_slots"))
+        await state.set_state(BookingStates.choosing_date)
+        return
+
+    await state.update_data(target_date=target_date.isoformat(), time_period=None)
+    await state.set_state(BookingStates.choosing_time_period)
+
+    text = build_period_screen_text(target_date, grouped, lang)
+    t0 = time.perf_counter()
+    await edit_or_send(callback, text, reply_markup=time_periods_kb(available_periods, lang))
+    t_send = time.perf_counter() - t0
+    log_action_timing(
+        "time period",
+        date=target_date.isoformat(),
+        periods=len(available_periods),
+        total_slots=len(slots),
+        slots=t_slots,
+        send=t_send,
+        total=time.perf_counter() - t_total,
+    )
+
+
+async def _show_time_grid_for_period(
+    callback: CallbackQuery,
+    state: FSMContext,
+    lang: str,
+    service_id: int,
+    target_date,
+    period: Period,
+) -> None:
+    t_total = time.perf_counter()
+    t0 = time.perf_counter()
+    slots = await _fetch_slots_for_date(service_id, target_date)
+    period_slots = group_slots_by_period(slots).get(period, [])
+    t_slots = time.perf_counter() - t0
+
+    if not period_slots:
+        await _show_period_screen(callback, state, lang, service_id, target_date)
+        return
+
+    await state.update_data(time_period=period)
+    await state.set_state(BookingStates.choosing_time)
+
+    text = build_time_grid_text(target_date, period, lang)
+    t0 = time.perf_counter()
+    await edit_or_send(callback, text, reply_markup=time_grid_kb(period_slots, lang))
+    t_send = time.perf_counter() - t0
+    log_action_timing(
+        "time grid",
+        date=target_date.isoformat(),
+        period=period,
+        slots=len(period_slots),
+        load=t_slots,
+        send=t_send,
+        total=time.perf_counter() - t_total,
     )
 
 
@@ -250,25 +497,30 @@ async def start_booking(message: Message, state: FSMContext, lang: str) -> None:
 
 @router.callback_query(BookingStates.choosing_service, F.data.regexp(r"^svc:\d+$"))
 async def view_service(callback: CallbackQuery, state: FSMContext, lang: str, bot: Bot) -> None:
+    t_total = time.perf_counter()
     service_id = int(callback.data.split(":", 1)[1])
+    await safe_callback_answer(callback)
+
+    t0 = time.perf_counter()
     async with async_session_factory() as session:
         service = await ServiceRepository(session).get_by_id(service_id)
         if not is_service_bookable(service):
-            await safe_callback_answer(callback, t(lang, client_service_unavailable_key(service)), show_alert=True)
+            await callback.message.answer(t(lang, client_service_unavailable_key(service)))
             return
         media_items = await ServiceMediaRepository(session).list_for_service(service_id)
         photos = await ServiceMediaRepository(session).count_photos(service_id)
         videos = await ServiceMediaRepository(session).count_videos(service_id)
+    t_db = time.perf_counter() - t0
 
-    await safe_callback_answer(callback)
     await state.update_data(flow_origin="client")
     await state.set_state(BookingStates.choosing_service)
     chat_id = callback.message.chat.id
     try:
-        await callback.message.delete()
-    except TelegramBadRequest:
         await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
 
+    t0 = time.perf_counter()
     if service.show_media_to_clients and media_items:
         await send_service_presentation(
             bot,
@@ -291,6 +543,14 @@ async def view_service(callback: CallbackQuery, state: FSMContext, lang: str, bo
             videos_count=videos,
             media_mode="card_only",
         )
+    t_send = time.perf_counter() - t0
+    log_action_timing(
+        "service card",
+        service_id=service_id,
+        db=t_db,
+        send=t_send,
+        total=time.perf_counter() - t_total,
+    )
 
 
 @router.callback_query(BookingStates.choosing_service_location, F.data == "cb:svc_back")
@@ -315,26 +575,31 @@ async def back_to_services(callback: CallbackQuery, state: FSMContext, lang: str
 
 @router.callback_query(BookingStates.choosing_service, F.data.startswith("cb:photos:"))
 async def view_service_photos(callback: CallbackQuery, lang: str, bot: Bot) -> None:
+    t_total = time.perf_counter()
     service_id = _parse_service_id(callback.data)
+    await safe_callback_answer(callback)
+
+    t0 = time.perf_counter()
     async with async_session_factory() as session:
         service = await ServiceRepository(session).get_by_id(service_id)
         if not is_service_bookable(service):
-            await safe_callback_answer(callback, t(lang, client_service_unavailable_key(service)), show_alert=True)
+            await callback.message.answer(t(lang, client_service_unavailable_key(service)))
             return
         if not service.show_media_to_clients:
-            await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+            await callback.message.answer(t(lang, "not_found"))
             return
         media_items = await ServiceMediaRepository(session).list_for_service(service_id)
         photos = await ServiceMediaRepository(session).count_photos(service_id)
         videos = await ServiceMediaRepository(session).count_videos(service_id)
+    t_db = time.perf_counter() - t0
 
-    await safe_callback_answer(callback)
     chat_id = callback.message.chat.id
     try:
-        await callback.message.delete()
-    except TelegramBadRequest:
         await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
 
+    t0 = time.perf_counter()
     await send_service_presentation(
         bot,
         chat_id,
@@ -345,30 +610,43 @@ async def view_service_photos(callback: CallbackQuery, lang: str, bot: Bot) -> N
         videos_count=videos,
         media_mode="photos",
     )
+    t_send = time.perf_counter() - t0
+    log_action_timing(
+        "service photos",
+        service_id=service_id,
+        db=t_db,
+        send=t_send,
+        total=time.perf_counter() - t_total,
+    )
 
 
 @router.callback_query(BookingStates.choosing_service, F.data.startswith("cb:video:"))
 async def view_service_video(callback: CallbackQuery, lang: str, bot: Bot) -> None:
+    t_total = time.perf_counter()
     service_id = _parse_service_id(callback.data)
+    await safe_callback_answer(callback)
+
+    t0 = time.perf_counter()
     async with async_session_factory() as session:
         service = await ServiceRepository(session).get_by_id(service_id)
         if not is_service_bookable(service):
-            await safe_callback_answer(callback, t(lang, client_service_unavailable_key(service)), show_alert=True)
+            await callback.message.answer(t(lang, client_service_unavailable_key(service)))
             return
         if not service.show_media_to_clients:
-            await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+            await callback.message.answer(t(lang, "not_found"))
             return
         media_items = await ServiceMediaRepository(session).list_for_service(service_id)
         photos = await ServiceMediaRepository(session).count_photos(service_id)
         videos = await ServiceMediaRepository(session).count_videos(service_id)
+    t_db = time.perf_counter() - t0
 
-    await safe_callback_answer(callback)
     chat_id = callback.message.chat.id
     try:
-        await callback.message.delete()
-    except TelegramBadRequest:
         await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
 
+    t0 = time.perf_counter()
     await send_service_presentation(
         bot,
         chat_id,
@@ -378,6 +656,14 @@ async def view_service_video(callback: CallbackQuery, lang: str, bot: Bot) -> No
         photos_count=photos,
         videos_count=videos,
         media_mode="video",
+    )
+    t_send = time.perf_counter() - t0
+    log_action_timing(
+        "service video",
+        service_id=service_id,
+        db=t_db,
+        send=t_send,
+        total=time.perf_counter() - t_total,
     )
 
 
@@ -426,6 +712,12 @@ async def choose_service(callback: CallbackQuery, state: FSMContext, lang: str) 
             time.perf_counter() - t_total,
             len(locations),
         )
+        log_action_timing(
+            "service location",
+            service_id=service_id,
+            answer=t_answer,
+            total=time.perf_counter() - t_total,
+        )
         return
 
     await _start_date_selection(callback, state, lang, service_id, t_answer=t_answer)
@@ -460,6 +752,12 @@ async def choose_service_location(callback: CallbackQuery, state: FSMContext, la
     await _start_date_selection(callback, state, lang, service_id)
 
 
+@router.callback_query(BookingStates.choosing_date, F.data == "bk:back:service")
+async def back_to_service_from_dates(callback: CallbackQuery, state: FSMContext, lang: str, bot: Bot) -> None:
+    await safe_callback_answer(callback)
+    await _show_service_or_location_back(callback, state, lang, bot)
+
+
 @router.callback_query(BookingStates.choosing_date, F.data.startswith("date:"))
 async def choose_date(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
     from datetime import date as date_cls
@@ -468,27 +766,55 @@ async def choose_date(callback: CallbackQuery, state: FSMContext, lang: str) -> 
     target_date = date_cls.fromisoformat(callback.data.split(":", 1)[1])
     data = await state.get_data()
     service_id = data["service_id"]
+    await _show_period_screen(callback, state, lang, service_id, target_date)
 
-    async with async_session_factory() as session:
-        availability = AvailabilityService(
-            WorkingHoursRepository(session),
-            UnavailableRepository(session),
-            BookingRepository(session),
-            CalendarService(session),
-        )
-        slots = await availability.get_available_slots(service_id, target_date, ServiceRepository(session))
 
-    if not slots:
-        await callback.message.answer(t(lang, "no_slots"))
+@router.callback_query(BookingStates.choosing_time_period, F.data.startswith("bk:period:"))
+async def choose_time_period(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    from datetime import date as date_cls
+
+    await safe_callback_answer(callback)
+    period = callback.data.rsplit(":", 1)[1]
+    if period not in ("morning", "day", "evening"):
         return
-
-    await state.update_data(target_date=target_date.isoformat())
-    await state.set_state(BookingStates.choosing_time)
-    await edit_or_send(
-        callback,
-        f"{format_date(target_date)}\n{t(lang, 'choose_time')}",
-        reply_markup=times_kb(slots, lang),
+    data = await state.get_data()
+    service_id = data.get("service_id")
+    target_date_raw = data.get("target_date")
+    if not service_id or not target_date_raw:
+        await edit_or_send(callback, t(lang, "session_expired"))
+        return
+    target_date = date_cls.fromisoformat(target_date_raw)
+    await _show_time_grid_for_period(
+        callback, state, lang, service_id, target_date, period  # type: ignore[arg-type]
     )
+
+
+@router.callback_query(BookingStates.choosing_time_period, F.data == "bk:back:dates")
+@router.callback_query(BookingStates.choosing_time, F.data == "bk:back:dates")
+async def back_to_dates(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    data = await state.get_data()
+    service_id = data.get("service_id")
+    if not service_id:
+        await edit_or_send(callback, t(lang, "session_expired"))
+        await state.clear()
+        return
+    await _show_dates_screen(callback, state, lang, service_id)
+
+
+@router.callback_query(BookingStates.choosing_time, F.data == "bk:back:periods")
+async def back_to_periods(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    from datetime import date as date_cls
+
+    await safe_callback_answer(callback)
+    data = await state.get_data()
+    service_id = data.get("service_id")
+    target_date_raw = data.get("target_date")
+    if not service_id or not target_date_raw:
+        await edit_or_send(callback, t(lang, "session_expired"))
+        return
+    target_date = date_cls.fromisoformat(target_date_raw)
+    await _show_period_screen(callback, state, lang, service_id, target_date)
 
 
 @router.callback_query(BookingStates.choosing_time, F.data.startswith("time:"))
@@ -683,35 +1009,18 @@ async def booking_edit_comment(callback: CallbackQuery, state: FSMContext, lang:
     await _prompt_comment(callback.message, state, lang)
 
 
-@router.callback_query(BookingStates.confirming, F.data == "bk:confirm:back")
-async def booking_confirm_back(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
-    from datetime import date as date_cls
-
+@router.callback_query(BookingStates.confirming, F.data == "bk:back:time")
+@router.callback_query(BookingStates.confirming_telegram_name, F.data == "bk:back:time")
+@router.callback_query(BookingStates.choosing_phone_method, F.data == "bk:back:time")
+async def back_to_time(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
     await safe_callback_answer(callback)
-    data = await state.get_data()
-    service_id = data.get("service_id")
-    target_date_raw = data.get("target_date")
-    if not service_id or not target_date_raw:
-        await edit_or_send(callback, t(lang, "session_expired"))
-        return
-    target_date = date_cls.fromisoformat(target_date_raw)
-    async with async_session_factory() as session:
-        availability = AvailabilityService(
-            WorkingHoursRepository(session),
-            UnavailableRepository(session),
-            BookingRepository(session),
-            CalendarService(session),
-        )
-        slots = await availability.get_available_slots(service_id, target_date, ServiceRepository(session))
-    if not slots:
-        await callback.message.answer(t(lang, "no_slots"))
-        return
-    await state.set_state(BookingStates.choosing_time)
-    await edit_or_send(
-        callback,
-        f"{format_date(target_date)}\n{t(lang, 'choose_time')}",
-        reply_markup=times_kb(slots, lang),
-    )
+    await _navigate_to_time_selection(callback, state, lang)
+
+
+@router.callback_query(BookingStates.confirming, F.data == "bk:confirm:back")
+async def booking_confirm_back_legacy(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    await _navigate_to_time_selection(callback, state, lang)
 
 
 @router.callback_query(BookingStates.confirming, F.data == "confirm:yes")
@@ -741,6 +1050,8 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, is_admin: 
         pass
 
     try:
+        t_db = 0.0
+        t0 = time.perf_counter()
         async with async_session_factory() as session:
             booking_service = BookingService(session)
             auto_confirm = (await SettingsRepository(session).get("auto_confirm", "false")) == "true"
@@ -758,6 +1069,7 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, is_admin: 
                 service_location_address=data.get("service_location_address"),
             )
             service = await ServiceRepository(session).get_by_id(booking.service_id)
+        t_db = time.perf_counter() - t0
     except SlotUnavailableError:
         await edit_or_send(callback, t(lang, "slot_unavailable"))
         await state.clear()
@@ -779,14 +1091,42 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, is_admin: 
         msg = t(lang, "booking_confirmed")
     else:
         msg = t(lang, "booking_created_pending")
+    t0 = time.perf_counter()
     await edit_or_send(
         callback,
         f"{msg}\n\n{format_booking(booking, service, lang, show_location_comment=True)}",
         parse_mode="HTML",
     )
+    t_ui = time.perf_counter() - t0
+    t0 = time.perf_counter()
     await _notify_admins_new_booking(callback.bot, booking, service, lang)
+    t_notify = time.perf_counter() - t0
+    log_action_timing(
+        "booking confirm",
+        booking_id=booking.id,
+        db=t_db,
+        ui=t_ui,
+        notify=t_notify,
+        total=t_db + t_ui + t_notify,
+    )
     await state.clear()
     await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+
+
+async def _booking_service_names(
+    session,
+    bookings: list,
+    lang: str,
+) -> dict[int, str]:
+    names: dict[int, str] = {}
+    repo = ServiceRepository(session)
+    fallback = t(lang, "client_booking_service_fallback")
+    for booking in bookings:
+        if booking.service_id in names:
+            continue
+        service = await repo.get_by_id(booking.service_id)
+        names[booking.service_id] = service.name if service and service.name else fallback
+    return names
 
 
 @router.message(F.text.in_(MY_BOOKINGS_TEXTS))
@@ -797,16 +1137,28 @@ async def my_bookings(message: Message, lang: str) -> None:
             await message.answer(t(lang, "no_bookings_yet"))
             return
         bookings = await BookingRepository(session).list_for_client(client.id)
+        service_names = await _booking_service_names(session, bookings, lang)
     if not bookings:
-        await message.answer(t(lang, "no_bookings"))
+        await message.answer(t(lang, "my_bookings_empty"))
         return
-    await message.answer(t(lang, "your_bookings"), reply_markup=bookings_kb(bookings))
+    await message.answer(
+        t(lang, "my_bookings_title"),
+        reply_markup=bookings_kb(bookings, lang, service_names),
+    )
 
 
 @router.callback_query(F.data == "my_bookings")
 async def my_bookings_cb(callback: CallbackQuery, lang: str) -> None:
+    await safe_callback_answer(callback)
     async with async_session_factory() as session:
         client = await ClientRepository(session).get_by_telegram_id(callback.from_user.id)
         bookings = await BookingRepository(session).list_for_client(client.id) if client else []
-    await edit_or_send(callback, t(lang, "your_bookings"), reply_markup=bookings_kb(bookings))
-    await safe_callback_answer(callback)
+        service_names = await _booking_service_names(session, bookings, lang) if bookings else {}
+    if not bookings:
+        await edit_or_send(callback, t(lang, "my_bookings_empty"))
+        return
+    await edit_or_send(
+        callback,
+        t(lang, "my_bookings_title"),
+        reply_markup=bookings_kb(bookings, lang, service_names),
+    )

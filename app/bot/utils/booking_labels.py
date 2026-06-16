@@ -8,10 +8,11 @@ from app.bot.utils.attendance_helpers import (
     ATTENDANCE_CONFIRMED,
     ATTENDANCE_REASON_PROVIDED,
 )
-from app.models import Booking, BookingStatus, Client
+from app.models import Booking, BookingStatus, Client, Service
 from app.utils.datetime_utils import now_local, to_local_naive
 
 ADMIN_NAME_MAX_LEN = 28
+CLIENT_SERVICE_NAME_MAX_LEN = 24
 
 _EN_MONTH_ABBR = (
     "Jan",
@@ -71,16 +72,30 @@ def format_admin_booking_datetime_label(start_at, lang: str) -> str:
 def admin_booking_list_icon(booking: Booking, *, section: str | None = None) -> str:
     if section == "cancelled" or booking.status == BookingStatus.CANCELLED:
         return "❌"
+    if section == "pending_admin" or (
+        section is None and booking.status == BookingStatus.PENDING
+    ):
+        return "🕓"
+    if section == "confirmed_bookings":
+        return "✅"
+    if section == "waiting_client_response":
+        return "❔"
+    if section == "needs_change":
+        return "⚠️"
     if section in ("history", "past"):
         if booking.attendance_status in (ATTENDANCE_CANNOT_ATTEND, ATTENDANCE_REASON_PROVIDED):
             return "⚠️"
         if booking.attendance_status == ATTENDANCE_CONFIRMED:
             return "✅"
         return "📜"
-    if booking.attendance_status == ATTENDANCE_CONFIRMED:
-        return "✅"
-    if booking.attendance_status in (ATTENDANCE_CANNOT_ATTEND, ATTENDANCE_REASON_PROVIDED):
-        return "⚠️"
+    if booking.status == BookingStatus.CONFIRMED:
+        if booking.attendance_status in (ATTENDANCE_CANNOT_ATTEND, ATTENDANCE_REASON_PROVIDED):
+            return "⚠️"
+        if booking.attendance_status == ATTENDANCE_CONFIRMED:
+            return "✅"
+        return "❔"
+    if booking.status == BookingStatus.PENDING:
+        return "🕓"
     return "❔"
 
 
@@ -95,3 +110,29 @@ def format_admin_booking_button(
     dt_label = format_admin_booking_datetime_label(booking.start_at, lang)
     name = truncate_display_name(resolve_booking_display_name(booking, client))
     return f"{icon} {dt_label} · {name}"
+
+
+def resolve_client_service_name(
+    service: Service | None,
+    lang: str,
+    *,
+    service_name: str | None = None,
+) -> str:
+    raw = service_name
+    if raw is None and service is not None and service.name and service.name.strip():
+        raw = service.name.strip()
+    if not raw:
+        return t(lang, "client_booking_service_fallback")
+    return truncate_display_name(raw, CLIENT_SERVICE_NAME_MAX_LEN)
+
+
+def format_client_booking_button(
+    booking: Booking,
+    lang: str,
+    *,
+    service: Service | None = None,
+    service_name: str | None = None,
+) -> str:
+    name = resolve_client_service_name(service, lang, service_name=service_name)
+    dt_label = format_admin_booking_datetime_label(booking.start_at, lang)
+    return f"📅 {dt_label} · {name}"

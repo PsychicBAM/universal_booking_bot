@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     booking_first_page_days: int = Field(14, alias="BOOKING_FIRST_PAGE_DAYS")
     availability_timeout_seconds: float = Field(8.0, alias="AVAILABILITY_TIMEOUT_SECONDS")
     google_calendar_busy_timeout_seconds: float = Field(5.0, alias="GOOGLE_CALENDAR_BUSY_TIMEOUT_SECONDS")
+    google_calendar_busy_cache_seconds: float = Field(45.0, alias="GOOGLE_CALENDAR_BUSY_CACHE_SECONDS")
+    google_calendar_api_timeout_seconds: float = Field(10.0, alias="GOOGLE_CALENDAR_API_TIMEOUT_SECONDS")
     cancel_booking_hours_before: int = Field(2, alias="CANCEL_BOOKING_HOURS_BEFORE")
     reschedule_booking_hours_before: int | None = Field(None, alias="RESCHEDULE_BOOKING_HOURS_BEFORE")
     contact_admin_username: str = Field("", alias="CONTACT_ADMIN_USERNAME")

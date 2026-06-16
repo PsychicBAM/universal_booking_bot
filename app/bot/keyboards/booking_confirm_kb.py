@@ -8,7 +8,8 @@ def booking_confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text=t(lang, "confirm_booking_btn"), callback_data="confirm:yes")],
             [InlineKeyboardButton(text=t(lang, "booking_edit_details"), callback_data="bkdata:edit:menu")],
-            [InlineKeyboardButton(text=t(lang, "back"), callback_data="bk:confirm:back")],
+            [InlineKeyboardButton(text=t(lang, "booking_back_to_time"), callback_data="bk:back:time")],
+            [InlineKeyboardButton(text=t(lang, "cancel"), callback_data="cancel")],
         ]
     )
 
@@ -32,6 +33,6 @@ def booking_edit_menu_kb(
             [InlineKeyboardButton(text=t(lang, "booking_edit_comment"), callback_data="bkdata:edit:comment")]
         )
     rows.append(
-        [InlineKeyboardButton(text=t(lang, "booking_edit_back_to_confirm"), callback_data="bkdata:edit:back")]
+        [InlineKeyboardButton(text=t(lang, "booking_back_to_confirm"), callback_data="bkdata:edit:back")]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)

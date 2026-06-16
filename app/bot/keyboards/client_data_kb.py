@@ -18,6 +18,13 @@ def confirm_telegram_name_kb(lang: str = "ru") -> InlineKeyboardMarkup:
                     callback_data="bkdata:name:manual",
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "booking_back_to_time"),
+                    callback_data="bk:back:time",
+                )
+            ],
+            [InlineKeyboardButton(text=t(lang, "cancel"), callback_data="cancel")],
         ]
     )
 
@@ -64,6 +71,10 @@ def saved_phone_kb(
                 )
             ]
         )
+    rows.append(
+        [InlineKeyboardButton(text=t(lang, "booking_back_to_time"), callback_data="bk:back:time")]
+    )
+    rows.append([InlineKeyboardButton(text=t(lang, "cancel"), callback_data="cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -102,6 +113,10 @@ def phone_method_inline_kb(
                 )
             ]
         )
+    rows.append(
+        [InlineKeyboardButton(text=t(lang, "booking_back_to_time"), callback_data="bk:back:time")]
+    )
+    rows.append([InlineKeyboardButton(text=t(lang, "cancel"), callback_data="cancel")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

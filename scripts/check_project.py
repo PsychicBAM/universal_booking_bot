@@ -427,8 +427,13 @@ def main() -> int:
             return 1
         from app.bot.keyboards.client_data_kb import confirm_telegram_name_kb, request_contact_reply_kb
 
-        if len(confirm_telegram_name_kb("en").inline_keyboard) != 2:
+        name_kb = confirm_telegram_name_kb("en").inline_keyboard
+        name_callbacks = [button.callback_data for row in name_kb for button in row]
+        if len(name_kb) < 3:
             print("FAIL: test A/B — confirm telegram name keyboard")
+            return 1
+        if "bk:back:time" not in name_callbacks or "cancel" not in name_callbacks:
+            print("FAIL: test A/B — confirm telegram name keyboard back/cancel")
             return 1
         contact_kb = request_contact_reply_kb("en", manual_enabled=True, phone_required=True)
         if not contact_kb.keyboard[0][0].request_contact:
@@ -530,8 +535,38 @@ def main() -> int:
         if "<b>" in rendered or "</b>" in rendered:
             print("FAIL: test G — literal HTML tags in booking card")
             return 1
+        if "ID записи" in rendered or "Booking ID" in rendered:
+            print("FAIL: test G — booking ID must not appear in client booking card")
+            return 1
         if "📋 Lesson" not in rendered:
             print("FAIL: test G — booking card service line")
+            return 1
+
+        from app.bot.keyboards import bookings_kb
+        from app.bot.utils.booking_labels import format_client_booking_button
+        from app.utils.formatting import format_client_booking_detail
+
+        btn_ru = format_client_booking_button(booking, "ru", service_name="Урок")
+        if "#41" in btn_ru or "#" in btn_ru.split("·")[-1]:
+            print("FAIL: client booking button must not contain booking id")
+            return 1
+        if "📅" not in btn_ru or "Урок" not in btn_ru:
+            print("FAIL: client booking button RU format")
+            return 1
+        btn_en = format_client_booking_button(booking, "en", service_name="Lesson")
+        if "Lesson" not in btn_en:
+            print("FAIL: client booking button EN format")
+            return 1
+        kb = bookings_kb([booking], "ru", {1: "Урок"})
+        if not kb.inline_keyboard[0][0].callback_data.endswith(":1"):
+            print("FAIL: client bookings_kb callback must keep booking id")
+            return 1
+        if "#" in kb.inline_keyboard[0][0].text:
+            print("FAIL: client bookings_kb label must not show booking id")
+            return 1
+        detail = format_client_booking_detail(booking, service, "ru")
+        if "ID записи" in detail:
+            print("FAIL: client booking detail must not show booking id")
             return 1
 
         import inspect
@@ -589,6 +624,12 @@ def main() -> int:
             )
 
         booking = _booking(26, fixed_now.replace(hour=21, minute=30))
+        booking_confirmed_no_response = _booking(
+            31,
+            fixed_now.replace(hour=20, minute=0),
+            status=BookingStatus.CONFIRMED,
+            attendance_status=None,
+        )
         booking_tomorrow = _booking(
             27,
             fixed_now.replace(hour=13, minute=0) + timedelta(days=1),
@@ -613,6 +654,7 @@ def main() -> int:
         )
         all_bookings = [
             booking,
+            booking_confirmed_no_response,
             booking_tomorrow,
             booking_needs_change,
             booking_past,
@@ -625,12 +667,17 @@ def main() -> int:
                 label_en = format_admin_booking_button(booking, "en")
                 label_confirmed = format_admin_booking_button(booking_tomorrow, "ru")
                 counts = compute_bookings_hub_counts(all_bookings, fixed_now)
-                waiting = filter_bookings_for_section(all_bookings, "waiting", fixed_now)
+                pending_admin = filter_bookings_for_section(all_bookings, "pending_admin", fixed_now)
                 upcoming = filter_bookings_for_section(all_bookings, "upcoming", fixed_now)
-                confirmed = filter_bookings_for_section(all_bookings, "confirmed", fixed_now)
+                confirmed_bookings = filter_bookings_for_section(
+                    all_bookings, "confirmed_bookings", fixed_now
+                )
+                waiting_client = filter_bookings_for_section(
+                    all_bookings, "waiting_client_response", fixed_now
+                )
                 needs_change = filter_bookings_for_section(all_bookings, "needs_change", fixed_now)
                 hub_kb = admin_bookings_hub_kb("ru")
-                folder_kb = admin_bookings_folder_kb(waiting, "waiting", 0, 1, "ru")
+                folder_kb = admin_bookings_folder_kb(pending_admin, "pending_admin", 0, 1, "ru")
 
         hub_callbacks = [btn.callback_data for row in hub_kb.inline_keyboard for btn in row]
         if any(cb.startswith("adm_book:view:") or cb.startswith("adm_booking:") for cb in hub_callbacks):
@@ -639,17 +686,20 @@ def main() -> int:
         if "adm_book:list:upcoming:0" not in hub_callbacks:
             print("FAIL: test A — hub missing upcoming folder")
             return 1
-        if "adm_book:list:waiting:0" not in hub_callbacks:
-            print("FAIL: test A — hub missing waiting folder")
+        if "adm_book:list:pending_admin:0" not in hub_callbacks:
+            print("FAIL: test A — hub missing pending admin folder")
             return 1
-        if len(hub_callbacks) != 7:
-            print("FAIL: test A — hub should have 6 folders plus back")
+        if "adm_book:list:waiting_client_response:0" not in hub_callbacks:
+            print("FAIL: test A — hub missing waiting client response folder")
+            return 1
+        if len(hub_callbacks) != 8:
+            print("FAIL: test A — hub should have 7 folders plus back")
             return 1
 
-        if label_ru != "❔ Сегодня 21:30 · Abdallah Bahi":
+        if label_ru != "🕓 Сегодня 21:30 · Abdallah Bahi":
             print("FAIL: admin booking button RU label mismatch")
             return 1
-        if label_en != "❔ Today 21:30 · Abdallah Bahi":
+        if label_en != "🕓 Today 21:30 · Abdallah Bahi":
             print("FAIL: admin booking button EN label mismatch")
             return 1
         if "#26" in label_ru:
@@ -663,27 +713,57 @@ def main() -> int:
             print("FAIL: name truncation length or suffix")
             return 1
 
-        if counts.waiting_count != 1:
-            print("FAIL: test B — waiting count")
+        if counts.pending_admin_count != 1:
+            print("FAIL: test A/B — pending admin count")
             return 1
-        if len(waiting) != 1:
-            print("FAIL: test B — waiting folder filter")
+        if len(pending_admin) != 1 or pending_admin[0].id != 26:
+            print("FAIL: test A/B — pending admin folder filter")
             return 1
-        if counts.upcoming_count != 3:
+        if counts.upcoming_count != 4:
             print("FAIL: test C — upcoming count")
             return 1
-        if len(upcoming) != 3:
+        if len(upcoming) != 4:
             print("FAIL: test C — upcoming folder filter")
             return 1
-        if counts.confirmed_count != 1 or len(confirmed) != 1:
-            print("FAIL: test F — confirmed count/filter")
+        if counts.confirmed_bookings_count != 3 or len(confirmed_bookings) != 3:
+            print("FAIL: test B — confirmed bookings count/filter")
+            return 1
+        if 26 in {b.id for b in confirmed_bookings}:
+            print("FAIL: test B — pending booking must not be in confirmed folder")
+            return 1
+        if counts.waiting_client_response_count != 1 or len(waiting_client) != 1:
+            print("FAIL: test C — waiting client response count/filter")
+            return 1
+        if waiting_client[0].id != 31:
+            print("FAIL: test C — waiting client response booking id")
             return 1
         if counts.needs_change_count != 1 or len(needs_change) != 1:
-            print("FAIL: test G — needs change count/filter")
+            print("FAIL: test D — needs change count/filter")
+            return 1
+
+        booking_confirmed = _booking(
+            26,
+            fixed_now.replace(hour=21, minute=30),
+            status=BookingStatus.CONFIRMED,
+            attendance_status=None,
+        )
+        after_confirm = [booking_confirmed, booking_confirmed_no_response, booking_tomorrow, booking_needs_change, booking_past, booking_cancelled]
+        with patch("app.services.admin_bookings_service.now_local", return_value=fixed_now):
+            after_pending = filter_bookings_for_section(after_confirm, "pending_admin", fixed_now)
+            after_confirmed = filter_bookings_for_section(after_confirm, "confirmed_bookings", fixed_now)
+            after_waiting = filter_bookings_for_section(after_confirm, "waiting_client_response", fixed_now)
+        if after_pending:
+            print("FAIL: test B — confirmed booking must leave pending admin folder")
+            return 1
+        if len(after_confirmed) != 4:
+            print("FAIL: test B — confirmed booking must appear in confirmed folder")
+            return 1
+        if len(after_waiting) != 2:
+            print("FAIL: test B — confirmed booking without response stays in waiting client folder")
             return 1
 
         folder_callbacks = [btn.callback_data for row in folder_kb.inline_keyboard for btn in row]
-        if "adm_book:view:26:from:waiting:0" not in folder_callbacks:
+        if "adm_book:view:26:from:pending_admin:0" not in folder_callbacks:
             print("FAIL: test D — folder booking view callback")
             return 1
         if "adm_book:hub" not in folder_callbacks:
@@ -698,18 +778,119 @@ def main() -> int:
                 fromlist=["admin_attendance_list_legacy"],
             ).admin_attendance_list_legacy
         )
-        if "show_bookings_folder" not in att_src or "waiting" not in att_src:
-            print("FAIL: test H — legacy attendance list should open waiting folder")
+        if "show_bookings_folder" not in att_src or "waiting_client_response" not in att_src:
+            print("FAIL: test H — legacy attendance list should open waiting client folder")
             return 1
 
+        from app.utils.formatting import format_client_cancelled_admin_notification
+
         service = SimpleNamespace(name="Test", requires_location=False, ask_client_comment=False)
+        cancel_note = format_client_cancelled_admin_notification(booking, service, "ru")
+        if "Клиент отменил запись" not in cancel_note:
+            print("FAIL: test E — client cancel admin notification")
+            return 1
+
         detail = format_booking(booking, service, "ru", admin_view=True)
         if "ID записи: 26" not in detail:
             print("FAIL: admin detail should show booking id label")
             return 1
+        if "Статус записи:" not in detail:
+            print("FAIL: admin detail should show booking status label")
+            return 1
         print("OK: admin bookings hub, folders, and button labels")
     except Exception as exc:
         print(f"FAIL: admin booking labels — {exc}")
+        return 1
+
+    try:
+        from datetime import date, datetime
+
+        from app.bot.keyboards.booking_time_kb import dates_kb, time_grid_kb, time_periods_kb
+        from app.bot.keyboards.booking_confirm_kb import booking_confirm_kb
+        from app.bot.utils.time_periods import (
+            build_period_screen_text,
+            group_slots_by_period,
+            non_empty_periods,
+            slot_period,
+        )
+
+        morning = datetime(2026, 6, 19, 9, 0)
+        afternoon = datetime(2026, 6, 19, 14, 0)
+        evening = datetime(2026, 6, 19, 19, 0)
+        if slot_period(morning) != "morning" or slot_period(afternoon) != "day":
+            raise AssertionError("slot_period classification")
+        if slot_period(evening) != "evening":
+            raise AssertionError("evening slot_period")
+
+        grouped = group_slots_by_period([morning, afternoon, evening])
+        if non_empty_periods(grouped) != ["morning", "day", "evening"]:
+            raise AssertionError("non_empty_periods order")
+
+        text_ru = build_period_screen_text(date(2026, 6, 19), grouped, "ru")
+        if "Выберите часть дня" not in text_ru or "мест" not in text_ru:
+            raise AssertionError("period screen RU text")
+
+        date_rows = dates_kb(
+            [date(2026, 6, 17), date(2026, 6, 18), date(2026, 6, 19)],
+            "ru",
+        ).inline_keyboard
+        if len(date_rows[0]) != 3:
+            raise AssertionError("dates_kb should use 3 columns per row")
+
+        period_callbacks = [
+            button.callback_data
+            for row in time_periods_kb(["day"], "en").inline_keyboard
+            for button in row
+        ]
+        if "bk:period:morning" in period_callbacks:
+            raise AssertionError("empty morning period must be hidden")
+        if "bk:period:day" not in period_callbacks:
+            raise AssertionError("day period button missing")
+
+        grid_rows = time_grid_kb(
+            [afternoon, afternoon.replace(minute=30), afternoon.replace(hour=15)],
+            "en",
+        ).inline_keyboard
+        time_row = next(row for row in grid_rows if row[0].callback_data.startswith("time:"))
+        if len(time_row) != 3:
+            raise AssertionError("time grid should use up to 3 buttons per row")
+
+        from app.utils.formatting import format_service
+
+        service = SimpleNamespace(
+            name="Урок",
+            description="Test",
+            price=500,
+            duration_minutes=15,
+            buffer_after_minutes=0,
+        )
+        service_text = format_service(service, "ru")
+        if "<b>" in service_text or "</b>" in service_text:
+            raise AssertionError("format_service must not contain HTML tags")
+        if "📋 Урок" not in service_text:
+            raise AssertionError("format_service plain service line")
+
+        date_callbacks = [
+            button.callback_data
+            for row in dates_kb([date(2026, 6, 19)], "ru").inline_keyboard
+            for button in row
+        ]
+        if "bk:back:service" not in date_callbacks:
+            raise AssertionError("dates_kb must include back to service")
+
+        confirm_callbacks = [
+            button.callback_data
+            for row in booking_confirm_kb("ru").inline_keyboard
+            for button in row
+        ]
+        if "bk:back:time" not in confirm_callbacks:
+            raise AssertionError("booking_confirm_kb must include back to time")
+        if "cancel" not in confirm_callbacks:
+            raise AssertionError("booking_confirm_kb must include cancel")
+
+        print("OK: booking time period UI")
+    except Exception as exc:
+        print(f"FAIL: booking time period UI — {exc}")
         return 1
 
     # Regression: Google busy aware datetimes must compare safely with naive local datetimes

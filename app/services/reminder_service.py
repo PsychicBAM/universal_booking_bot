@@ -1,4 +1,5 @@
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -40,23 +41,42 @@ class ReminderService:
         self.settings = get_settings()
 
     async def process_reminders(self) -> None:
-        async with async_session_factory() as session:
-            config = await load_reminder_config(session)
-            if not config.enabled:
-                logger.info("Reminder check skipped: reminders disabled")
-                return
-            text_config = await load_confirmation_text_config(session)
+        t_total = time.perf_counter()
+        processed = 0
+        errors = 0
+        try:
+            async with async_session_factory() as session:
+                config = await load_reminder_config(session)
+                if not config.enabled:
+                    logger.info("Reminder check skipped: reminders disabled")
+                    return
+                text_config = await load_confirmation_text_config(session)
 
-            now = now_local()
-            bookings = await BookingRepository(session).list_for_reminders(now)
-            self._log_run_header(config, now, len(bookings))
+                now = now_local()
+                bookings = await BookingRepository(session).list_for_reminders(now)
+                self._log_run_header(config, now, len(bookings))
 
-            for booking in bookings:
-                await self._process_booking_reminders(
-                    session, booking, now, config, text_config, log_details=True
-                )
+                for booking in bookings:
+                    try:
+                        await self._process_booking_reminders(
+                            session, booking, now, config, text_config, log_details=True
+                        )
+                        processed += 1
+                    except Exception:
+                        errors += 1
+                        logger.exception(
+                            "Reminder processing failed for booking_id=%s",
+                            booking.id,
+                        )
 
-            await session.commit()
+                await session.commit()
+        finally:
+            log_action_timing(
+                "reminder run",
+                processed=processed,
+                errors=errors,
+                total=time.perf_counter() - t_total,
+            )
 
     def _log_run_header(self, config: ReminderConfig, now: datetime, booking_count: int) -> None:
         if config.test_mode:

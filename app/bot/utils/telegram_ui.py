@@ -66,8 +66,8 @@ async def edit_or_send(
         await safe_edit_text(callback.message, text, reply_markup=reply_markup, parse_mode=parse_mode)
         return
     except TelegramBadRequest:
+        await callback.message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)
         try:
             await callback.message.delete()
         except TelegramBadRequest:
             pass
-        await callback.message.answer(text, reply_markup=reply_markup, parse_mode=parse_mode)

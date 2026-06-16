@@ -25,6 +25,24 @@ from app.utils.formatting import format_datetime
 logger = logging.getLogger(__name__)
 
 
+def _schedule_calendar_sync_create(booking_id: int) -> None:
+    from app.services.booking_calendar_sync import schedule_calendar_sync_create
+
+    schedule_calendar_sync_create(booking_id)
+
+
+def _schedule_calendar_sync_update(booking_id: int) -> None:
+    from app.services.booking_calendar_sync import schedule_calendar_sync_update
+
+    schedule_calendar_sync_update(booking_id)
+
+
+def _schedule_calendar_sync_delete(booking_id: int, event_id: str) -> None:
+    from app.services.booking_calendar_sync import schedule_calendar_sync_delete
+
+    schedule_calendar_sync_delete(booking_id, event_id)
+
+
 class BookingService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -174,7 +192,7 @@ class BookingService:
                 raise
 
         if booking.status == BookingStatus.CONFIRMED:
-            await self._sync_calendar(booking)
+            _schedule_calendar_sync_create(booking.id)
         return booking
 
     async def confirm_booking(self, booking_id: int) -> Booking:
@@ -184,7 +202,7 @@ class BookingService:
         booking.status = BookingStatus.CONFIRMED
         await self.session.commit()
         await self.session.refresh(booking)
-        await self._sync_calendar(booking)
+        _schedule_calendar_sync_create(booking.id)
         return booking
 
     async def cancel_booking(self, booking_id: int, *, telegram_id: int | None = None) -> Booking:
@@ -202,18 +220,12 @@ class BookingService:
             ):
                 raise ValueError("Too late to cancel")
 
-        if booking.google_event_id:
-            try:
-                await self.calendar_service.delete_event(booking.google_event_id)
-            except Exception:
-                logger.exception(
-                    "Failed to delete Google Calendar event for booking_id=%s (booking still cancelled)",
-                    booking.id,
-                )
-
+        event_id = booking.google_event_id
         booking.status = BookingStatus.CANCELLED
         await self.session.commit()
         await self.session.refresh(booking)
+        if event_id:
+            _schedule_calendar_sync_delete(booking.id, event_id)
         return booking
 
     async def complete_booking(self, booking_id: int) -> Booking:
@@ -300,7 +312,7 @@ class BookingService:
         )
         return summary, "\n".join(description_parts), self._event_location(booking)
 
-    async def _sync_calendar(self, booking: Booking) -> None:
+    async def sync_calendar_for_booking(self, booking: Booking) -> None:
         if not await self.calendar_service.is_enabled():
             return
         try:
@@ -317,11 +329,17 @@ class BookingService:
                 await self.session.commit()
                 logger.info("Google Calendar sync success: booking_id=%s event_id=%s", booking.id, event_id)
             else:
-                logger.warning("Google Calendar sync returned no event_id for booking_id=%s", booking.id)
+                logger.warning(
+                    "Google Calendar sync failed, but booking was saved: booking_id=%s",
+                    booking.id,
+                )
         except Exception:
-            logger.exception("Google Calendar sync failed for booking_id=%s (local booking kept)", booking.id)
+            logger.exception(
+                "Google Calendar sync failed, but booking was saved: booking_id=%s",
+                booking.id,
+            )
 
-    async def _update_calendar(self, booking: Booking) -> None:
+    async def update_calendar_for_booking(self, booking: Booking) -> None:
         if not await self.calendar_service.is_enabled():
             return
         try:
@@ -339,9 +357,18 @@ class BookingService:
                     booking.google_event_id = event_id
                     await self.session.commit()
             elif booking.status == BookingStatus.CONFIRMED:
-                await self._sync_calendar(booking)
+                await self.sync_calendar_for_booking(booking)
         except Exception:
-            logger.exception("Failed to update Google Calendar for booking %s", booking.id)
+            logger.exception(
+                "Google Calendar update failed, but booking was saved: booking_id=%s",
+                booking.id,
+            )
+
+    async def delete_calendar_event(self, event_id: str) -> None:
+        try:
+            await self.calendar_service.delete_event(event_id)
+        except Exception:
+            logger.exception("Google Calendar delete failed for event_id=%s", event_id)
 
     async def reschedule_booking(
         self,
@@ -394,7 +421,7 @@ class BookingService:
                 raise
 
         if booking.status == BookingStatus.CONFIRMED:
-            await self._update_calendar(booking)
+            _schedule_calendar_sync_update(booking.id)
 
         return booking
 
@@ -420,7 +447,7 @@ class BookingService:
         await self.session.refresh(booking)
 
         if booking.status == BookingStatus.CONFIRMED:
-            await self._update_calendar(booking)
+            _schedule_calendar_sync_update(booking.id)
         return booking
 
     async def change_client_address(
@@ -439,7 +466,7 @@ class BookingService:
         await self.session.refresh(booking)
 
         if booking.status == BookingStatus.CONFIRMED:
-            await self._update_calendar(booking)
+            _schedule_calendar_sync_update(booking.id)
         return booking
 
     async def change_client_comment(
@@ -458,5 +485,5 @@ class BookingService:
         await self.session.refresh(booking)
 
         if booking.status == BookingStatus.CONFIRMED:
-            await self._update_calendar(booking)
+            _schedule_calendar_sync_update(booking.id)
         return booking

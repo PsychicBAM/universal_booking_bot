@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 
 from app.bot.i18n import LANG_EN, LANG_RU, all_texts, status_label, t, weekday_name
+from app.bot.keyboards.booking_time_kb import dates_kb
 from app.bot.keyboards.service_media_kb import admin_service_detail_media_rows
 from app.bot.keyboards.service_location_kb import admin_service_detail_location_row
 from app.models import Booking, Service
@@ -77,22 +78,11 @@ def services_kb(services: list[Service], lang: str = "ru") -> InlineKeyboardMark
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def dates_kb(dates: list, lang: str = "ru", prefix: str = "date") -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text=format_date(d), callback_data=f"{prefix}:{d.isoformat()}")]
-        for d in dates[:14]
-    ]
-    buttons.append([InlineKeyboardButton(text=t(lang, "cancel"), callback_data="cancel")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
 def times_kb(slots: list, lang: str = "ru", prefix: str = "time") -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text=format_time(s), callback_data=f"{prefix}:{slot_to_callback(s)}")]
-        for s in slots
-    ]
-    buttons.append([InlineKeyboardButton(text=t(lang, "cancel"), callback_data="cancel")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    """Legacy alias — uses compact 3-column time grid."""
+    from app.bot.keyboards.booking_time_kb import time_grid_kb
+
+    return time_grid_kb(slots, lang, prefix=prefix)
 
 
 def confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
@@ -106,12 +96,27 @@ def confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     )
 
 
-def bookings_kb(bookings: list[Booking]) -> InlineKeyboardMarkup:
-    buttons = []
-    for b in bookings:
-        buttons.append(
-            [InlineKeyboardButton(text=format_time(b.start_at) + f" #{b.id}", callback_data=f"my:view:{b.id}")]
-        )
+def bookings_kb(
+    bookings: list[Booking],
+    lang: str = "ru",
+    service_names: dict[int, str] | None = None,
+) -> InlineKeyboardMarkup:
+    from app.bot.utils.booking_labels import format_client_booking_button
+
+    names = service_names or {}
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text=format_client_booking_button(
+                    b,
+                    lang,
+                    service_name=names.get(b.service_id),
+                ),
+                callback_data=f"my:view:{b.id}",
+            )
+        ]
+        for b in bookings
+    ]
     if not buttons:
         buttons = [[InlineKeyboardButton(text="—", callback_data="noop")]]
     return InlineKeyboardMarkup(inline_keyboard=buttons)

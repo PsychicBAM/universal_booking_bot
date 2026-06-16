@@ -36,6 +36,16 @@ async def stale_time_callback(callback: CallbackQuery, state: FSMContext, is_adm
     await _expired_session(callback, state, is_admin, lang)
 
 
+@router.callback_query(F.data.regexp(r"^bk:period:(morning|day|evening)$"))
+async def stale_period_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool, lang: str) -> None:
+    await _expired_session(callback, state, is_admin, lang)
+
+
+@router.callback_query(F.data.in_({"bk:back:dates", "bk:back:periods", "bk:back:service", "bk:back:time"}))
+async def stale_booking_nav_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool, lang: str) -> None:
+    await _expired_session(callback, state, is_admin, lang)
+
+
 @router.callback_query(F.data == "confirm:yes")
 async def stale_confirm_callback(callback: CallbackQuery, state: FSMContext, is_admin: bool, lang: str) -> None:
     await _expired_session(callback, state, is_admin, lang)

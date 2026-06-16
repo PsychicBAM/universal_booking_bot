@@ -50,7 +50,7 @@ async def admin_attendance_list_legacy(callback: CallbackQuery, is_admin: bool, 
         await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
         return
     await safe_callback_answer(callback)
-    await show_bookings_folder(callback, lang, "waiting", 0)
+    await show_bookings_folder(callback, lang, "waiting_client_response", 0)
 
 
 @router.callback_query(F.data.regexp(r"^adm_att:view:"))
@@ -78,6 +78,7 @@ async def admin_attendance_send(callback: CallbackQuery, is_admin: bool, lang: s
     if not is_admin:
         await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
         return
+    await safe_callback_answer(callback)
     booking_id, back = _parse_action_callback(callback.data)
     async with async_session_factory() as session:
         booking = await BookingRepository(session).get_by_id(booking_id)
@@ -90,7 +91,6 @@ async def admin_attendance_send(callback: CallbackQuery, is_admin: bool, lang: s
                 t(lang, "admin_attendance_already_answered_confirm"),
                 reply_markup=admin_attendance_resend_confirm_kb(booking_id, back, lang),
             )
-            await safe_callback_answer(callback)
             return
     await _do_send_question(callback, lang, booking_id, back)
 
@@ -104,11 +104,11 @@ async def _do_send_question(
     async with async_session_factory() as session:
         booking = await BookingRepository(session).get_by_id(booking_id)
         if not booking or not is_booking_attendance_eligible(booking):
-            await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+            await callback.message.answer(t(lang, "not_found"))
             return
         client = await session.get(Client, booking.client_id)
         if not client:
-            await safe_callback_answer(callback, t(lang, "admin_attendance_send_failed"), show_alert=True)
+            await callback.message.answer(t(lang, "admin_attendance_send_failed"))
             return
         service = await ServiceRepository(session).get_by_id(booking.service_id)
         service_name = service.name if service else f"#{booking.service_id}"
@@ -121,11 +121,11 @@ async def _do_send_question(
             manual=True,
         )
         if not sent:
-            await safe_callback_answer(callback, t(lang, "admin_attendance_send_failed"), show_alert=True)
+            await callback.message.answer(t(lang, "admin_attendance_send_failed"))
             return
         mark_manual_attendance_sent(booking, callback.from_user.id)
         await session.commit()
 
-    await safe_callback_answer(callback, t(lang, "admin_attendance_sent"))
+    await callback.message.answer(t(lang, "admin_attendance_sent"))
     section, page = parse_attendance_back(back)
     await show_booking_detail(callback, lang, booking_id, section, page)

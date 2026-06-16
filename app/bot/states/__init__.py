@@ -5,6 +5,7 @@ class BookingStates(StatesGroup):
     choosing_service = State()
     choosing_service_location = State()
     choosing_date = State()
+    choosing_time_period = State()
     choosing_time = State()
     confirming_telegram_name = State()
     entering_name = State()

@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.i18n import t
 from app.bot.utils.attendance_helpers import (
     ATTENDANCE_CANNOT_ATTEND,
-    ATTENDANCE_CONFIRMED,
     ATTENDANCE_REASON_PROVIDED,
     has_attendance_response,
 )
@@ -19,22 +18,47 @@ from app.utils.datetime_utils import now_local, to_local_naive
 
 BOOKINGS_PAGE_SIZE = 10
 BOOKINGS_SECTIONS = frozenset(
-    {"upcoming", "waiting", "confirmed", "needs_change", "history", "cancelled"}
+    {
+        "upcoming",
+        "pending_admin",
+        "confirmed_bookings",
+        "waiting_client_response",
+        "needs_change",
+        "history",
+        "cancelled",
+    }
 )
+SECTION_ALIASES = {
+    "waiting": "pending_admin",
+    "confirmed": "confirmed_bookings",
+    "pending": "pending_admin",
+}
 DEFAULT_BOOKINGS_SECTION = "upcoming"
 
 _FOLDER_INTRO_KEYS = {
-    "waiting": "bookings_folder_waiting_intro",
-    "confirmed": "bookings_folder_confirmed_intro",
+    "pending_admin": "bookings_pending_admin_intro",
+    "confirmed_bookings": "bookings_confirmed_bookings_intro",
+    "waiting_client_response": "bookings_waiting_client_response_intro",
     "needs_change": "bookings_folder_needs_change_intro",
+}
+
+_FOLDER_TITLE_KEYS = {
+    "pending_admin": "bookings_folder_pending_admin",
+    "confirmed_bookings": "bookings_folder_confirmed_bookings",
+    "waiting_client_response": "bookings_folder_waiting_client_response",
+    "needs_change": "bookings_folder_needs_change",
+    "upcoming": "bookings_folder_upcoming",
+    "history": "bookings_folder_history",
+    "cancelled": "bookings_folder_cancelled",
 }
 
 
 @dataclass
 class BookingsHubCounts:
     upcoming_count: int
-    waiting_count: int
-    confirmed_count: int
+    pending_admin_count: int
+    confirmed_bookings_count: int
+    waiting_client_response_count: int
     needs_change_count: int
     history_count: int
     cancelled_count: int
@@ -42,25 +66,32 @@ class BookingsHubCounts:
 
 def normalize_bookings_section(section: str) -> str:
     key = (section or DEFAULT_BOOKINGS_SECTION).strip().lower()
+    key = SECTION_ALIASES.get(key, key)
     return key if key in BOOKINGS_SECTIONS else DEFAULT_BOOKINGS_SECTION
 
 
-def _is_upcoming_active(booking: Booking, now: datetime) -> bool:
-    if booking.status not in (BookingStatus.PENDING, BookingStatus.CONFIRMED):
-        return False
+def _is_future(booking: Booking, now: datetime) -> bool:
     return to_local_naive(booking.start_at) >= now
 
 
-def _is_waiting(booking: Booking, now: datetime) -> bool:
-    return _is_upcoming_active(booking, now) and not has_attendance_response(booking)
+def _is_upcoming_active(booking: Booking, now: datetime) -> bool:
+    return booking.status in (BookingStatus.PENDING, BookingStatus.CONFIRMED) and _is_future(booking, now)
 
 
-def _is_confirmed_attendance(booking: Booking, now: datetime) -> bool:
-    return _is_upcoming_active(booking, now) and booking.attendance_status == ATTENDANCE_CONFIRMED
+def _is_pending_admin(booking: Booking, now: datetime) -> bool:
+    return booking.status == BookingStatus.PENDING and _is_future(booking, now)
+
+
+def _is_confirmed_booking(booking: Booking, now: datetime) -> bool:
+    return booking.status == BookingStatus.CONFIRMED and _is_future(booking, now)
+
+
+def _is_waiting_client_response(booking: Booking, now: datetime) -> bool:
+    return _is_confirmed_booking(booking, now) and not has_attendance_response(booking)
 
 
 def _is_needs_change(booking: Booking, now: datetime) -> bool:
-    return _is_upcoming_active(booking, now) and booking.attendance_status in (
+    return _is_confirmed_booking(booking, now) and booking.attendance_status in (
         ATTENDANCE_CANNOT_ATTEND,
         ATTENDANCE_REASON_PROVIDED,
     )
@@ -79,7 +110,8 @@ def compute_bookings_hub_counts(
     now: datetime | None = None,
 ) -> BookingsHubCounts:
     now = now or now_local()
-    upcoming = waiting = confirmed = needs_change = history = cancelled = 0
+    upcoming = pending_admin = confirmed_bookings = waiting_client_response = 0
+    needs_change = history = cancelled = 0
     for booking in bookings:
         if _is_cancelled(booking):
             cancelled += 1
@@ -87,16 +119,19 @@ def compute_bookings_hub_counts(
             history += 1
         if _is_upcoming_active(booking, now):
             upcoming += 1
-            if _is_waiting(booking, now):
-                waiting += 1
-            elif _is_confirmed_attendance(booking, now):
-                confirmed += 1
-            elif _is_needs_change(booking, now):
-                needs_change += 1
+        if _is_pending_admin(booking, now):
+            pending_admin += 1
+        if _is_confirmed_booking(booking, now):
+            confirmed_bookings += 1
+        if _is_waiting_client_response(booking, now):
+            waiting_client_response += 1
+        if _is_needs_change(booking, now):
+            needs_change += 1
     return BookingsHubCounts(
         upcoming_count=upcoming,
-        waiting_count=waiting,
-        confirmed_count=confirmed,
+        pending_admin_count=pending_admin,
+        confirmed_bookings_count=confirmed_bookings,
+        waiting_client_response_count=waiting_client_response,
         needs_change_count=needs_change,
         history_count=history,
         cancelled_count=cancelled,
@@ -112,26 +147,22 @@ def filter_bookings_for_section(
     now = now or now_local()
     if section == "upcoming":
         items = [b for b in bookings if _is_upcoming_active(b, now)]
-        items.sort(key=lambda b: to_local_naive(b.start_at))
-        return items
-    if section == "waiting":
-        items = [b for b in bookings if _is_waiting(b, now)]
-        items.sort(key=lambda b: to_local_naive(b.start_at))
-        return items
-    if section == "confirmed":
-        items = [b for b in bookings if _is_confirmed_attendance(b, now)]
-        items.sort(key=lambda b: to_local_naive(b.start_at))
-        return items
-    if section == "needs_change":
+    elif section == "pending_admin":
+        items = [b for b in bookings if _is_pending_admin(b, now)]
+    elif section == "confirmed_bookings":
+        items = [b for b in bookings if _is_confirmed_booking(b, now)]
+    elif section == "waiting_client_response":
+        items = [b for b in bookings if _is_waiting_client_response(b, now)]
+    elif section == "needs_change":
         items = [b for b in bookings if _is_needs_change(b, now)]
-        items.sort(key=lambda b: to_local_naive(b.start_at))
-        return items
-    if section == "history":
+    elif section == "history":
         items = [b for b in bookings if _is_history(b, now)]
+    else:
+        items = [b for b in bookings if _is_cancelled(b)]
+    if section == "history" or section == "cancelled":
         items.sort(key=lambda b: to_local_naive(b.start_at), reverse=True)
-        return items
-    items = [b for b in bookings if _is_cancelled(b)]
-    items.sort(key=lambda b: to_local_naive(b.start_at), reverse=True)
+    else:
+        items.sort(key=lambda b: to_local_naive(b.start_at))
     return items
 
 
@@ -147,17 +178,16 @@ def paginate_bookings_folder(
     return bookings[start : start + per_page], page, total_pages
 
 
-def _folder_label_key(section: str) -> str:
-    return f"bookings_folder_{normalize_bookings_section(section)}"
+def _folder_title_key(section: str) -> str:
+    section = normalize_bookings_section(section)
+    return _FOLDER_TITLE_KEYS.get(section, f"bookings_folder_{section}")
 
 
 def _button_section_for_list(section: str) -> str | None:
     section = normalize_bookings_section(section)
-    if section == "history":
-        return "history"
-    if section == "cancelled":
-        return "cancelled"
-    return None
+    if section in ("history", "cancelled"):
+        return section
+    return section
 
 
 def build_bookings_hub_body(counts: BookingsHubCounts, lang: str) -> str:
@@ -166,8 +196,9 @@ def build_bookings_hub_body(counts: BookingsHubCounts, lang: str) -> str:
         t(lang, "bookings_hub_intro"),
         "",
         f"{t(lang, 'bookings_folder_upcoming')} — {counts.upcoming_count}",
-        f"{t(lang, 'bookings_folder_waiting')} — {counts.waiting_count}",
-        f"{t(lang, 'bookings_folder_confirmed')} — {counts.confirmed_count}",
+        f"{t(lang, 'bookings_folder_pending_admin')} — {counts.pending_admin_count}",
+        f"{t(lang, 'bookings_folder_confirmed_bookings')} — {counts.confirmed_bookings_count}",
+        f"{t(lang, 'bookings_folder_waiting_client_response')} — {counts.waiting_client_response_count}",
         f"{t(lang, 'bookings_folder_needs_change')} — {counts.needs_change_count}",
         f"{t(lang, 'bookings_folder_history')} — {counts.history_count}",
         f"{t(lang, 'bookings_folder_cancelled')} — {counts.cancelled_count}",
@@ -181,7 +212,7 @@ def build_bookings_folder_body(
     lang: str,
 ) -> str:
     section = normalize_bookings_section(section)
-    lines = [t(lang, _folder_label_key(section))]
+    lines = [t(lang, _folder_title_key(section))]
     intro_key = _FOLDER_INTRO_KEYS.get(section)
     if intro_key:
         lines.append(t(lang, intro_key))
@@ -214,7 +245,6 @@ async def load_bookings_folder(
 
 
 def parse_bookings_view_callback(data: str) -> tuple[int, str, int]:
-    # adm_book:view:{booking_id}:from:{section}:{page}
     parts = data.split(":")
     booking_id = int(parts[2])
     if len(parts) >= 6 and parts[3] == "from":
@@ -225,7 +255,6 @@ def parse_bookings_view_callback(data: str) -> tuple[int, str, int]:
 
 
 def parse_bookings_list_callback(data: str) -> tuple[str, int]:
-    # adm_book:list:{section}:{page}
     parts = data.split(":")
     section = normalize_bookings_section(parts[2] if len(parts) > 2 else DEFAULT_BOOKINGS_SECTION)
     page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
@@ -239,5 +268,5 @@ def parse_attendance_back(back: str) -> tuple[str, int]:
         page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
         return section, page
     if back.startswith("list:"):
-        return "waiting", 0
+        return "waiting_client_response", 0
     return DEFAULT_BOOKINGS_SECTION, 0

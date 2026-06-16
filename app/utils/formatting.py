@@ -2,7 +2,7 @@ from datetime import date, datetime, time
 from html import escape
 
 from app.bot.i18n import format_buffer, format_duration, status_label, t
-from app.models import Booking, Service
+from app.models import Booking, BookingStatus, Service
 
 
 def format_date(d: date) -> str:
@@ -53,9 +53,9 @@ def _location_comment_lines(
 
 def format_service(service: Service, lang: str = "ru") -> str:
     price = t(lang, "price_label", price=f"{service.price} ₽") if service.price else t(lang, "price_free")
-    desc = escape(service.description) if service.description else ""
+    desc = service.description or ""
     lines = [
-        f"<b>{escape(service.name)}</b>",
+        f"📋 {service.name}",
         t(lang, "duration_label", duration=format_duration(lang, service.duration_minutes)),
     ]
     if service.buffer_after_minutes:
@@ -81,7 +81,7 @@ def format_service_admin(
     )
     media_status = t(lang, "media_enabled") if service.show_media_to_clients else t(lang, "media_disabled")
     return (
-        f"<b>{escape(service.name)}</b>\n"
+        f"📋 {service.name}\n"
         f"{t(lang, 'duration_label', duration=format_duration(lang, service.duration_minutes))}\n"
         f"{t(lang, 'buffer_after_service', buffer=format_buffer(lang, service.buffer_after_minutes))}\n"
         f"{t(lang, 'service_requires_location', status=location_status)}\n"
@@ -96,6 +96,65 @@ def format_service_admin(
     ).strip()
 
 
+def _admin_booking_status_text(booking: Booking, lang: str) -> str:
+    if booking.status == BookingStatus.CANCELLED:
+        key = "booking_status_cancelled"
+    elif booking.status == BookingStatus.PENDING:
+        key = "booking_status_pending_admin"
+    elif booking.status == BookingStatus.CONFIRMED:
+        key = "booking_status_confirmed"
+    else:
+        return t(lang, "booking_status_line", status=status_label(lang, booking.status.value))
+    return t(lang, "booking_status_label", status=t(lang, key))
+
+
+def _client_response_text(booking: Booking, lang: str) -> str:
+    from app.bot.utils.attendance_helpers import (
+        ATTENDANCE_CANNOT_ATTEND,
+        ATTENDANCE_CONFIRMED,
+        ATTENDANCE_REASON_PROVIDED,
+        has_attendance_response,
+    )
+
+    if booking.status != BookingStatus.CONFIRMED:
+        return ""
+    if not has_attendance_response(booking):
+        key = "client_response_no_response"
+    elif booking.attendance_status == ATTENDANCE_CONFIRMED:
+        key = "client_response_confirmed"
+    elif booking.attendance_status in (ATTENDANCE_CANNOT_ATTEND, ATTENDANCE_REASON_PROVIDED):
+        key = "client_response_needs_change"
+    else:
+        key = "client_response_no_response"
+    return t(lang, "client_response_label", response=t(lang, key))
+
+
+def format_client_cancelled_admin_notification(
+    booking: Booking,
+    service: Service | None,
+    lang: str,
+    *,
+    client_username: str | None = None,
+) -> str:
+    service_name = escape(service.name) if service else f"#{booking.service_id}"
+    tg = f"@{client_username}" if client_username else t(lang, "not_provided")
+    lines = [
+        t(lang, "booking_cancelled_by_client_admin_title"),
+        "",
+        f"{t(lang, 'label_service')}: {service_name}",
+        f"{t(lang, 'label_datetime')}: {format_datetime(booking.start_at)}",
+        f"{t(lang, 'label_name')}: {escape(booking.client_name)}",
+        t(lang, "admin_booking_telegram_line", username=tg),
+        f"{t(lang, 'label_phone')}: {escape(booking.client_phone or t(lang, 'booking_phone_not_provided'))}",
+    ]
+    lines.extend(_service_location_lines(booking, lang))
+    lines.extend(_location_comment_lines(booking, service, lang, admin_view=True))
+    lines.append(
+        t(lang, "booking_status_label", status=t(lang, "booking_cancelled_by_client_admin_status"))
+    )
+    return "\n".join(lines)
+
+
 def format_booking(
     booking: Booking,
     service: Service | None = None,
@@ -105,34 +164,33 @@ def format_booking(
     show_location_comment: bool = False,
     client_username: str | None = None,
 ) -> str:
-    service_name = escape(service.name) if service else f"Service #{booking.service_id}"
+    service_name = escape(service.name) if service else t(lang, "client_booking_service_fallback")
     status = status_label(lang, booking.status.value)
     lines = [
         f"📋 {service_name}",
-        t(lang, "booking_id_label", id=str(booking.id)),
         f"📅 {format_datetime(booking.start_at)}",
         f"👤 {escape(booking.client_name)}",
         f"📞 {escape(booking.client_phone or t(lang, 'booking_phone_not_provided'))}",
     ]
     if admin_view:
+        lines.insert(2, t(lang, "booking_id_label", id=str(booking.id)))
         tg = f"@{client_username}" if client_username else t(lang, "not_provided")
-        lines.insert(3, t(lang, "admin_booking_telegram_line", username=tg))
+        lines.insert(4, t(lang, "admin_booking_telegram_line", username=tg))
     lines.extend(_service_location_lines(booking, lang))
     if show_location_comment or admin_view:
         lines.extend(_location_comment_lines(booking, service, lang, admin_view=admin_view))
-    from app.services.attendance_service import (
-        format_attendance_admin_line,
-        format_attendance_client_line,
-    )
+    if admin_view:
+        lines.append(_admin_booking_status_text(booking, lang))
+        client_response = _client_response_text(booking, lang)
+        if client_response:
+            lines.append(client_response)
+    else:
+        from app.services.attendance_service import format_attendance_client_line
 
-    attendance_line = (
-        format_attendance_admin_line(booking, lang)
-        if admin_view
-        else format_attendance_client_line(booking, lang)
-    )
-    if attendance_line:
-        lines.append(attendance_line)
-    lines.append(t(lang, "booking_status_line", status=status))
+        attendance_line = format_attendance_client_line(booking, lang)
+        if attendance_line:
+            lines.append(attendance_line)
+        lines.append(t(lang, "booking_status_line", status=status))
     return "\n".join(lines)
 
 
@@ -142,30 +200,34 @@ def format_booking_short(booking: Booking, lang: str = "ru") -> str:
 
 
 def format_client_booking_detail(booking: Booking, service: Service, lang: str = "ru") -> str:
-    service_name = escape(service.name) if service else f"#{booking.service_id}"
+    service_name = (
+        escape(service.name)
+        if service and service.name
+        else t(lang, "client_booking_service_fallback")
+    )
     status = status_label(lang, booking.status.value)
-    if booking.service_location_title:
-        service_location = escape(booking.service_location_title)
-        if booking.service_location_address:
-            service_location += f"\n{t(lang, 'address_label', address=escape(booking.service_location_address))}"
-    else:
-        service_location = t(lang, "not_provided")
     lines = [
-        f"{t(lang, 'my_booking_detail_title')}\n",
-        f"{t(lang, 'label_service')}: {service_name}",
-        f"{t(lang, 'label_datetime')}: {format_datetime(booking.start_at)}",
-        f"{t(lang, 'my_booking_service_location')}: {service_location}",
+        f"📋 {service_name}",
+        f"📅 {format_datetime(booking.start_at)}",
     ]
-    if booking.location_text or service.requires_location:
+    if booking.service_location_title:
+        lines.append(
+            f"📍 {t(lang, 'my_booking_service_location')}: {escape(booking.service_location_title)}"
+        )
+        if booking.service_location_address:
+            lines.append(
+                t(lang, "address_label", address=escape(booking.service_location_address))
+            )
+    if booking.location_text or (service and service.requires_location):
         client_address = escape(booking.location_text) if booking.location_text else t(lang, "not_provided")
-        lines.append(f"{t(lang, 'my_booking_client_address')}: {client_address}")
-    if booking.client_comment or service.ask_client_comment:
+        lines.append(f"📍 {t(lang, 'my_booking_client_address')}: {client_address}")
+    if booking.client_comment or (service and service.ask_client_comment):
         comment = (
             escape(booking.client_comment)
             if booking.client_comment
             else t(lang, "comment_not_provided")
         )
-        lines.append(f"{t(lang, 'my_booking_comment')}: {comment}")
+        lines.append(f"💬 {t(lang, 'my_booking_comment')}: {comment}")
     from app.services.attendance_service import format_attendance_client_line
 
     attendance_line = format_attendance_client_line(booking, lang)

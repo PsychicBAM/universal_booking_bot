@@ -9,8 +9,9 @@ from app.services.admin_bookings_service import (
 
 _HUB_SECTIONS = (
     "upcoming",
-    "waiting",
-    "confirmed",
+    "pending_admin",
+    "confirmed_bookings",
+    "waiting_client_response",
     "needs_change",
     "history",
     "cancelled",
@@ -101,7 +102,7 @@ def admin_booking_detail_kb(
         rows.append(
             [InlineKeyboardButton(text=t(lang, "message_client_btn"), callback_data=f"adm_msg:{booking_id}")]
         )
-        if show_send_confirmation:
+        if status == "confirmed" and show_send_confirmation:
             rows.append(
                 [
                     InlineKeyboardButton(

@@ -29,6 +29,7 @@ from app.repositories import (
     WorkingHoursRepository,
 )
 from app.services.availability_service import AvailabilityService
+from app.services.booking_notification_service import notify_admins_client_cancelled
 from app.services.booking_service import BookingService
 from app.services.exceptions import SlotUnavailableError
 from app.services.calendar_service import CalendarService
@@ -141,11 +142,14 @@ async def show_client_booking_detail(
 @router.callback_query(F.data.startswith("cancel_booking:"))
 async def legacy_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: str, state: FSMContext) -> None:
     booking_id = int(callback.data.split(":", 1)[1])
+    booking = None
+    service = None
     try:
         async with async_session_factory() as session:
-            await BookingService(session).cancel_booking(
+            booking = await BookingService(session).cancel_booking(
                 booking_id, telegram_id=callback.from_user.id
             )
+            service = await ServiceRepository(session).get_by_id(booking.service_id)
     except ValueError as exc:
         msg = t(lang, "cancel_too_late") if "Too late" in str(exc) else t(lang, "access_denied")
         await safe_callback_answer(callback, msg, show_alert=True)
@@ -154,6 +158,8 @@ async def legacy_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: s
         logger.exception("Client cancel failed for booking %s", booking_id)
         await safe_callback_answer(callback, t(lang, "error_generic"), show_alert=True)
         return
+    if booking:
+        await notify_admins_client_cancelled(callback.bot, booking, service, lang=lang)
     await state.clear()
     await edit_or_send(callback, t(lang, "booking_cancelled"))
     await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
@@ -177,11 +183,14 @@ async def legacy_my_booking_view(callback: CallbackQuery, lang: str, state: FSMC
 @router.callback_query(F.data.startswith("my:cancel:"))
 async def my_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: str, state: FSMContext) -> None:
     booking_id = int(callback.data.split(":")[-1])
+    booking = None
+    service = None
     try:
         async with async_session_factory() as session:
-            await BookingService(session).cancel_booking(
+            booking = await BookingService(session).cancel_booking(
                 booking_id, telegram_id=callback.from_user.id
             )
+            service = await ServiceRepository(session).get_by_id(booking.service_id)
     except ValueError as exc:
         msg = t(lang, "cancel_too_late") if "Too late" in str(exc) else t(lang, "access_denied")
         await safe_callback_answer(callback, msg, show_alert=True)
@@ -190,6 +199,8 @@ async def my_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: str, 
         logger.exception("Client cancel failed for booking %s", booking_id)
         await safe_callback_answer(callback, t(lang, "error_generic"), show_alert=True)
         return
+    if booking:
+        await notify_admins_client_cancelled(callback.bot, booking, service, lang=lang)
     await state.clear()
     await edit_or_send(callback, t(lang, "booking_cancelled"))
     await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))

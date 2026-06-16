@@ -1,4 +1,5 @@
 import logging
+import time
 
 from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
@@ -651,27 +652,46 @@ async def admin_confirm_booking(callback: CallbackQuery, is_admin: bool, lang: s
 
     await safe_callback_answer(callback)
     booking_id = int(callback.data.rsplit(":", 1)[1])
+    t_total = time.perf_counter()
+    t_db = 0.0
     try:
+        t0 = time.perf_counter()
         async with async_session_factory() as session:
             booking = await BookingService(session).confirm_booking(booking_id)
             service = await ServiceRepository(session).get_by_id(booking.service_id)
             client = await session.get(Client, booking.client_id)
+        t_db = time.perf_counter() - t0
     except ValueError:
         await safe_edit_text(callback.message, t(lang, "not_found"))
         return
+    t0 = time.perf_counter()
     await safe_edit_text(
         callback.message,
         f"{t(lang, 'booking_confirmed_admin')}\n{format_booking(booking, service, lang, admin_view=True)}",
     )
+    t_ui = time.perf_counter() - t0
+    t_notify = 0.0
     if client:
         client_lang = client.language or get_settings().default_language
         try:
+            t0 = time.perf_counter()
             await callback.bot.send_message(
                 client.telegram_id,
                 f"{t(client_lang, 'booking_confirmed_client')}\n{format_booking(booking, service, client_lang, show_location_comment=True)}",
             )
+            t_notify = time.perf_counter() - t0
         except Exception:
             pass
+    from app.utils.perf_logging import log_action_timing
+
+    log_action_timing(
+        "admin confirm booking",
+        booking_id=booking_id,
+        db=t_db,
+        ui=t_ui,
+        notify=t_notify,
+        total=time.perf_counter() - t_total,
+    )
 
 
 @router.callback_query(F.data.startswith("adm_cancel:"))

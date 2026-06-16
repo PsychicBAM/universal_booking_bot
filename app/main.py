@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import subprocess
 import sys
 
 from aiogram import Bot, Dispatcher
@@ -30,6 +31,44 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _resolve_git_commit() -> str:
+    try:
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            .strip()
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+
+
+async def _log_startup_diagnostics(settings) -> None:
+    from app.database.session import async_session_factory
+    from app.services.calendar_service import CalendarService
+    from app.services.reminder_settings import load_reminder_config
+
+    calendar_enabled = False
+    async with async_session_factory() as session:
+        calendar_service = CalendarService(session)
+        calendar_enabled = await calendar_service.is_enabled()
+        reminder_config = await load_reminder_config(session)
+
+    logger.info(
+        "Startup diagnostics: pid=%s timezone=%s commit=%s google_calendar_enabled=%s "
+        "reminder_test_mode=%s reminders_enabled=%s",
+        os.getpid(),
+        settings.timezone,
+        _resolve_git_commit(),
+        calendar_enabled,
+        reminder_config.test_mode,
+        reminder_config.enabled,
+    )
 
 
 async def seed_default_working_hours() -> None:
@@ -78,6 +117,8 @@ async def main() -> None:
     async with async_session_factory() as session:
         await CalendarService(session).log_startup_status()
 
+    await _log_startup_diagnostics(settings)
+
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
@@ -112,10 +153,17 @@ async def main() -> None:
 
     scheduler = AsyncIOScheduler()
     reminder_service = ReminderService(bot)
-    scheduler.add_job(reminder_service.process_reminders, "interval", minutes=1)
+    scheduler.add_job(
+        reminder_service.process_reminders,
+        "interval",
+        minutes=1,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=30,
+    )
     scheduler.start()
 
-    logger.info("Universal booking bot started")
+    logger.info("Universal booking bot started (pid=%s)", os.getpid())
     try:
         await dp.start_polling(bot)
     finally:

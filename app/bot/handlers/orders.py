@@ -6,12 +6,15 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.i18n import t
 from app.bot.keyboards import (
+    MAIN_MENU_MY_ACTIVITY_TEXTS,
     MY_ORDERS_TEXTS,
     ORDER_SERVICES_TEXTS,
     cancel_kb,
     main_menu,
+    my_activity_kb,
     services_kb,
 )
+from app.services.booking_notification_service import notify_admins_order_cancelled_by_client
 from app.bot.keyboards.orders_kb import client_order_detail_kb, client_orders_kb
 from app.bot.order_client_data import show_order_confirmation, start_order_flow
 from app.bot.states import BookingStates, OrderStates
@@ -31,6 +34,36 @@ logger = logging.getLogger(__name__)
 
 async def _order_services(session):
     return await ServiceRepository(session).list_client_services(service_type=SERVICE_TYPE_ORDER)
+
+
+@router.message(F.text.in_(MAIN_MENU_MY_ACTIVITY_TEXTS))
+async def my_activity_hub(message: Message, lang: str) -> None:
+    await message.answer(
+        f"{t(lang, 'my_activity_title')}\n\n{t(lang, 'my_activity_intro')}",
+        reply_markup=my_activity_kb(lang),
+    )
+
+
+@router.callback_query(F.data == "myact:bookings")
+async def my_activity_bookings(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    from app.bot.handlers.client import my_bookings
+
+    await my_bookings(callback.message, lang)
+
+
+@router.callback_query(F.data == "myact:orders")
+async def my_activity_orders(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    await my_orders_list(callback.message, state, lang)
+
+
+@router.callback_query(F.data == "myact:back")
+async def my_activity_back(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    await safe_callback_answer(callback)
+    async with async_session_factory() as session:
+        kwargs = await menu_mode_kwargs(session)
+    await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang, **kwargs))
 
 
 @router.message(F.text.in_(ORDER_SERVICES_TEXTS))
@@ -174,6 +207,7 @@ async def my_order_cancel(callback: CallbackQuery, lang: str) -> None:
         await session.commit()
         order = await ServiceOrderRepository(session).get_by_id(order_id)
         service = await ServiceRepository(session).get_by_id(order.service_id)
+    await notify_admins_order_cancelled_by_client(callback.bot, order, service)
     await edit_or_send(
         callback,
         f"{t(lang, 'order_detail_title')}\n\n{format_order_client(order, service, lang)}",

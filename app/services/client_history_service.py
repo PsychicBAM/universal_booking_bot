@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.i18n import t
 from app.bot.utils.attendance_helpers import ATTENDANCE_CANNOT_ATTEND, ATTENDANCE_REASON_PROVIDED
 from app.bot.utils.booking_labels import format_admin_booking_button
-from app.models import Booking, BookingStatus, Client
-from app.repositories import BookingRepository, ClientRepository, ServiceRepository
+from app.models import Booking, BookingStatus, Client, ServiceOrder, ServiceOrderStatus
+from app.repositories import BookingRepository, ClientRepository, ServiceOrderRepository, ServiceRepository
 from app.utils.datetime_utils import now_local, to_local_naive
 from app.utils.formatting import format_datetime
 
@@ -84,6 +84,9 @@ class ClientStats:
     cannot_attend_count: int
     last_service_name: str | None
     status_label_key: str
+    active_orders_count: int = 0
+    total_orders_count: int = 0
+    cancelled_orders_count: int = 0
 
 
 @dataclass
@@ -145,11 +148,19 @@ def _display_phone(client: Client, bookings: list[Booking]) -> str | None:
     return None
 
 
+def _order_stats(orders: list[ServiceOrder]) -> tuple[int, int, int]:
+    active_statuses = {ServiceOrderStatus.NEW.value, ServiceOrderStatus.IN_PROGRESS.value}
+    active = sum(1 for order in orders if order.status in active_statuses)
+    cancelled = sum(1 for order in orders if order.status == ServiceOrderStatus.CANCELLED.value)
+    return active, len(orders), cancelled
+
+
 def compute_client_stats(
     client: Client,
     bookings: list[Booking],
     service_names: dict[int, str],
     *,
+    orders: list[ServiceOrder] | None = None,
     now: datetime | None = None,
 ) -> ClientStats:
     now = now or now_local()
@@ -169,6 +180,8 @@ def compute_client_stats(
     if sorted_all:
         latest = sorted_all[-1]
         last_service_name = service_names.get(latest.service_id)
+
+    active_orders_count, total_orders_count, cancelled_orders_count = _order_stats(orders or [])
 
     stats = ClientStats(
         client_id=client.id,
@@ -193,50 +206,27 @@ def compute_client_stats(
         cannot_attend_count=cannot_attend_count,
         last_service_name=last_service_name,
         status_label_key="client_status_new",
+        active_orders_count=active_orders_count,
+        total_orders_count=total_orders_count,
+        cancelled_orders_count=cancelled_orders_count,
     )
     stats.status_label_key = client_status_label_key(stats)
     return stats
 
 
 def format_client_list_label(stats: ClientStats, lang: str) -> str:
-    name = stats.name
-    if stats.status_label_key == "client_status_new" or stats.non_cancelled_count == 1:
-        return t(lang, "clients_list_new", name=name, count=str(stats.non_cancelled_count))
-    if stats.status_label_key == "client_status_returning":
-        if stats.next_booking_at:
-            next_date = stats.next_booking_at.strftime("%d.%m")
-            return t(
-                lang,
-                "clients_list_returning",
-                name=name,
-                count=str(stats.non_cancelled_count),
-                date=next_date,
-            )
-        return t(
-            lang,
-            "clients_list_returning_no_next",
-            name=name,
-            count=str(stats.non_cancelled_count),
-        )
-    if stats.cancelled_count > 0 and stats.completed_or_past_count == 0 and stats.upcoming_count == 0:
-        return t(lang, "clients_list_cancelled", name=name, count=str(stats.cancelled_count))
-    if stats.completed_or_past_count > 0:
-        return t(
-            lang,
-            "clients_list_visited",
-            name=name,
-            count=str(stats.completed_or_past_count),
-        )
-    if stats.upcoming_count > 0:
-        next_date = stats.next_booking_at.strftime("%d.%m") if stats.next_booking_at else "—"
-        return t(
-            lang,
-            "clients_list_returning",
-            name=name,
-            count=str(stats.non_cancelled_count),
-            date=next_date,
-        )
-    return t(lang, "clients_list_new", name=name, count=str(stats.non_cancelled_count))
+    parts = [stats.name]
+    if stats.status_label_key == "client_status_new" and stats.non_cancelled_count <= 1:
+        parts.append(t(lang, "client_tag_new"))
+    elif stats.status_label_key == "client_status_returning":
+        parts.append(t(lang, "client_tag_repeated"))
+    parts.append(t(lang, "client_tag_future_booking", count=str(stats.upcoming_count)))
+    if stats.active_orders_count > 0:
+        parts.append(t(lang, "client_tag_has_order", count=str(stats.active_orders_count)))
+    cancelled_total = stats.cancelled_count + stats.cancelled_orders_count
+    if cancelled_total > 0:
+        parts.append(t(lang, "client_tag_cancelled", count=str(cancelled_total)))
+    return " · ".join(parts)
 
 
 def format_client_detail_text(stats: ClientStats, lang: str) -> str:
@@ -306,7 +296,9 @@ async def _load_service_names(session: AsyncSession) -> dict[int, str]:
 
 
 async def _build_stats_index(session: AsyncSession) -> dict[int, ClientStats]:
-    client_ids = await BookingRepository(session).list_distinct_client_ids()
+    booking_client_ids = await BookingRepository(session).list_distinct_client_ids()
+    order_client_ids = await ServiceOrderRepository(session).list_distinct_client_ids()
+    client_ids = sorted(set(booking_client_ids) | set(order_client_ids))
     if not client_ids:
         return {}
     clients = {
@@ -314,6 +306,7 @@ async def _build_stats_index(session: AsyncSession) -> dict[int, ClientStats]:
         for client in await ClientRepository(session).list_by_ids(client_ids)
     }
     bookings_by_client = await BookingRepository(session).list_all_grouped_by_client(client_ids)
+    orders_by_client = await ServiceOrderRepository(session).list_all_grouped_by_client(client_ids)
     service_names = await _load_service_names(session)
     now = now_local()
     stats_index: dict[int, ClientStats] = {}
@@ -322,7 +315,14 @@ async def _build_stats_index(session: AsyncSession) -> dict[int, ClientStats]:
         if not client:
             continue
         bookings = bookings_by_client.get(client_id, [])
-        stats_index[client_id] = compute_client_stats(client, bookings, service_names, now=now)
+        orders = orders_by_client.get(client_id, [])
+        stats_index[client_id] = compute_client_stats(
+            client,
+            bookings,
+            service_names,
+            orders=orders,
+            now=now,
+        )
     return stats_index
 
 
@@ -331,10 +331,11 @@ async def get_client_stats(session: AsyncSession, client_id: int) -> ClientStats
     if not client:
         return None
     bookings = await BookingRepository(session).list_all_for_client(client_id)
-    if not bookings:
+    orders = await ServiceOrderRepository(session).list_for_client(client_id)
+    if not bookings and not orders:
         return None
     service_names = await _load_service_names(session)
-    return compute_client_stats(client, bookings, service_names)
+    return compute_client_stats(client, bookings, service_names, orders=orders)
 
 
 async def list_clients(

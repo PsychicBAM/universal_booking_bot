@@ -182,6 +182,46 @@ class ServiceRepository:
         )
         return list(result.scalars().all())
 
+    async def count_active_services(self) -> int:
+        from sqlalchemy import func
+
+        result = await self.session.execute(
+            select(func.count())
+            .select_from(Service)
+            .where(Service.is_active.is_(True))
+            .where(Service.archived_at.is_(None))
+        )
+        return int(result.scalar_one())
+
+    async def count_disabled_services(self) -> int:
+        from sqlalchemy import func
+
+        result = await self.session.execute(
+            select(func.count())
+            .select_from(Service)
+            .where(Service.is_active.is_(False))
+            .where(Service.archived_at.is_(None))
+        )
+        return int(result.scalar_one())
+
+    async def count_archived_services(self) -> int:
+        from sqlalchemy import func
+
+        result = await self.session.execute(
+            select(func.count()).select_from(Service).where(Service.archived_at.isnot(None))
+        )
+        return int(result.scalar_one())
+
+    async def search_by_name(self, query: str) -> list[Service]:
+        pattern = f"%{query.strip()}%"
+        result = await self.session.execute(
+            select(Service)
+            .where(Service.archived_at.is_(None))
+            .where(Service.name.ilike(pattern))
+            .order_by(Service.name)
+        )
+        return list(result.scalars().all())
+
     async def list_all(self) -> list[Service]:
         result = await self.session.execute(select(Service).order_by(Service.name))
         return list(result.scalars().all())
@@ -306,6 +346,23 @@ class ServiceOrderRepository:
             .order_by(ServiceOrder.created_at.desc())
         )
         return list(result.scalars().all())
+
+    async def list_distinct_client_ids(self) -> list[int]:
+        result = await self.session.execute(select(ServiceOrder.client_id).distinct())
+        return sorted({row[0] for row in result.all()})
+
+    async def list_all_grouped_by_client(
+        self, client_ids: list[int]
+    ) -> dict[int, list[ServiceOrder]]:
+        if not client_ids:
+            return {}
+        result = await self.session.execute(
+            select(ServiceOrder).where(ServiceOrder.client_id.in_(client_ids))
+        )
+        grouped: dict[int, list[ServiceOrder]] = {client_id: [] for client_id in client_ids}
+        for order in result.scalars().all():
+            grouped.setdefault(order.client_id, []).append(order)
+        return grouped
 
     async def create(
         self,

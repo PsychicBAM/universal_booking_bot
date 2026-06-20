@@ -9,6 +9,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "welcome_sub": "Book an appointment, view your bookings, or contact the admin.",
         "support_line": "\nSupport: @{username}",
         "book_appointment": "📅 Book appointment",
+        "main_menu_services": "🛠 Services",
+        "main_menu_my_activity": "📂 My bookings & requests",
+        "my_activity_title": "📂 My bookings & requests",
+        "my_activity_intro": "Choose a section:",
+        "my_activity_bookings": "📋 My bookings",
+        "my_activity_orders": "📝 My requests",
         "my_bookings": "📋 My bookings",
         "contact_admin": "📞 Contact admin",
         "language": "🌐 Language",
@@ -125,7 +131,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "confirm_btn": "✅ Confirm",
         "not_found": "Not found",
         "admin_panel": "Admin panel:",
-        "admin_services": "🛠 Services",
+        "admin_services": "🛠 Manage services",
         "schedule_button": "📅 Schedule",
         "schedule_title": "📅 Schedule & availability",
         "schedule_wh_section": "🕘 Working hours:",
@@ -143,6 +149,18 @@ TEXTS: dict[str, dict[str, str]] = {
         "admin_bookings": "📒 Bookings",
         "admin_clients_button": "👥 Clients",
         "clients_title": "👥 Clients",
+        "clients_hub_simplified_title": "👥 Clients",
+        "clients_hub_simplified_intro": (
+            "All clients are collected here.\n"
+            "Open a client to see bookings, requests and contacts."
+        ),
+        "clients_all_button": "📋 All clients",
+        "clients_search_button": "🔎 Search client",
+        "client_tag_new": "🆕",
+        "client_tag_repeated": "🔁",
+        "client_tag_future_booking": "📅 {count}",
+        "client_tag_has_order": "📝 {count}",
+        "client_tag_cancelled": "❌ {count}",
         "clients_intro": (
             "This section shows client history: previous visits, first-time clients, "
             "returning clients, and upcoming bookings."
@@ -196,7 +214,19 @@ TEXTS: dict[str, dict[str, str]] = {
         "client_history_cannot_attend": "⚠️ #{id} {datetime} — {service} — needs change",
         "admin_calendar": "📆 Calendar settings",
         "admin_settings": "⚙️ Bot settings",
-        "services_management": "Services management:",
+        "services_management": "🛠 Services",
+        "services_hub_intro": "Choose a section:",
+        "services_folder_active": "✅ Active services — {count}",
+        "services_folder_disabled": "🔴 Disabled services — {count}",
+        "services_folder_archive": "📦 Service archive — {count}",
+        "services_search_button": "🔎 Search service",
+        "services_active_title": "✅ Active services",
+        "services_disabled_title": "🔴 Disabled services",
+        "services_archive_title": "📦 Service archive",
+        "services_group_booking": "📅 Bookings:",
+        "services_group_order": "📝 Requests:",
+        "services_search_prompt": "Enter service name to search:",
+        "services_search_no_results": "No services found.",
         "services_list": "Services:",
         "add_service": "➕ Add service",
         "enter_service_name": "Enter service name:",
@@ -353,7 +383,6 @@ TEXTS: dict[str, dict[str, str]] = {
         "service_delete_confirm_no": "❌ Cancel",
         "service_delete_cancelled": "Deletion cancelled.",
         "service_archived_label": "Archived",
-        "services_active_title": "Active services:",
         "services_no_active": "No active services.",
         "services_disabled_button": "🔴 Disabled services",
         "services_disabled_title": "🔴 Disabled services",
@@ -501,6 +530,24 @@ TEXTS: dict[str, dict[str, str]] = {
         "bookings_folder_confirmed_intro": "These clients confirmed their booking.",
         "booking_cancelled_by_client_admin_title": "❌ Client cancelled a booking",
         "booking_cancelled_by_client_admin_status": "cancelled by client",
+        "booking_cancelled_by_admin_client_title": (
+            "❌ Your booking was cancelled by the administrator"
+        ),
+        "booking_cancelled_by_admin_client_body": (
+            "Service: {service}\n"
+            "Date and time: {datetime}\n\n"
+            "If you have questions, please contact the administrator."
+        ),
+        "order_cancelled_by_client_admin_title": "❌ Client cancelled a request",
+        "order_cancelled_by_client_admin_status": "cancelled by client",
+        "order_cancelled_by_admin_client_title": (
+            "❌ Your request was cancelled by the administrator"
+        ),
+        "order_cancelled_by_admin_client_body": (
+            "Service: {service}\n\n"
+            "If you have questions, please contact the administrator."
+        ),
+        "booking_rescheduled_by_client_admin_title": "🔄 Client rescheduled a booking",
         "booking_status_label": "Booking status: {status}",
         "client_response_label": "Client response: {response}",
         "booking_status_pending_admin": "waiting for admin approval",
@@ -522,15 +569,18 @@ TEXTS: dict[str, dict[str, str]] = {
         "my_booking_client_address": "Client address",
         "my_booking_comment": "Comment",
         "reschedule_booking_btn": "🔁 Reschedule",
+        "reschedule_back_to_booking": "⬅️ Back to booking",
         "change_location_btn": "📍 Change location",
         "change_address_btn": "🏠 Change client address",
         "change_comment_btn": "💬 Change comment",
         "back_to_my_bookings": "🔙 Back to my bookings",
         "confirm_reschedule": (
             "Confirm reschedule?\n"
-            "Old: {old_datetime}\n"
-            "New: {new_datetime}"
+            "Was: {old_datetime}\n"
+            "Now: {new_datetime}"
         ),
+        "reschedule_was_line": "Was: {datetime}",
+        "reschedule_became_line": "Now: {datetime}",
         "confirm_reschedule_btn": "✅ Confirm reschedule",
         "booking_rescheduled": "✅ Booking rescheduled.",
         "service_location_changed": "✅ Service location changed.",
@@ -1158,6 +1208,12 @@ TEXTS: dict[str, dict[str, str]] = {
         "welcome_sub": "Запишитесь на услугу, посмотрите записи или свяжитесь с администратором.",
         "support_line": "\nПоддержка: @{username}",
         "book_appointment": "📅 Записаться",
+        "main_menu_services": "🛠 Услуги",
+        "main_menu_my_activity": "📂 Мои записи и заявки",
+        "my_activity_title": "📂 Мои записи и заявки",
+        "my_activity_intro": "Выберите раздел:",
+        "my_activity_bookings": "📋 Мои записи",
+        "my_activity_orders": "📝 Мои заявки",
         "my_bookings": "📋 Мои записи",
         "contact_admin": "📞 Связаться с админом",
         "language": "🌐 Язык",
@@ -1274,7 +1330,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "confirm_btn": "✅ Подтвердить",
         "not_found": "Не найдено",
         "admin_panel": "Админ-панель:",
-        "admin_services": "🛠 Услуги",
+        "admin_services": "🛠 Управление услугами",
         "schedule_button": "📅 Расписание",
         "schedule_title": "📅 Расписание и доступность",
         "schedule_wh_section": "🕘 Рабочее время:",
@@ -1292,6 +1348,18 @@ TEXTS: dict[str, dict[str, str]] = {
         "admin_bookings": "📒 Записи",
         "admin_clients_button": "👥 Клиенты",
         "clients_title": "👥 Клиенты",
+        "clients_hub_simplified_title": "👥 Клиенты",
+        "clients_hub_simplified_intro": (
+            "Здесь собраны все клиенты.\n"
+            "Откройте клиента, чтобы увидеть его записи, заявки и контакты."
+        ),
+        "clients_all_button": "📋 Все клиенты",
+        "clients_search_button": "🔎 Поиск клиента",
+        "client_tag_new": "🆕",
+        "client_tag_repeated": "🔁",
+        "client_tag_future_booking": "📅 {count}",
+        "client_tag_has_order": "📝 {count}",
+        "client_tag_cancelled": "❌ {count}",
         "clients_intro": (
             "Здесь собрана история клиентов: кто был раньше, кто записан впервые, "
             "у кого есть будущие записи."
@@ -1345,7 +1413,19 @@ TEXTS: dict[str, dict[str, str]] = {
         "client_history_cannot_attend": "⚠️ #{id} {datetime} — {service} — нужно изменить",
         "admin_calendar": "📆 Настройки календаря",
         "admin_settings": "⚙️ Настройки бота",
-        "services_management": "Управление услугами:",
+        "services_management": "🛠 Услуги",
+        "services_hub_intro": "Выберите раздел:",
+        "services_folder_active": "✅ Активные услуги — {count}",
+        "services_folder_disabled": "🔴 Отключённые услуги — {count}",
+        "services_folder_archive": "📦 Архив услуг — {count}",
+        "services_search_button": "🔎 Поиск услуги",
+        "services_active_title": "✅ Активные услуги",
+        "services_disabled_title": "🔴 Отключённые услуги",
+        "services_archive_title": "📦 Архив услуг",
+        "services_group_booking": "📅 Записи:",
+        "services_group_order": "📝 Заявки:",
+        "services_search_prompt": "Введите название услуги для поиска:",
+        "services_search_no_results": "Услуги не найдены.",
         "services_list": "Услуги:",
         "add_service": "➕ Добавить услугу",
         "enter_service_name": "Введите название услуги:",
@@ -1502,7 +1582,6 @@ TEXTS: dict[str, dict[str, str]] = {
         "service_delete_confirm_no": "❌ Отмена",
         "service_delete_cancelled": "Удаление отменено.",
         "service_archived_label": "Архив",
-        "services_active_title": "Активные услуги:",
         "services_no_active": "Активных услуг нет.",
         "services_disabled_button": "🔴 Отключённые услуги",
         "services_disabled_title": "🔴 Отключённые услуги",
@@ -1650,6 +1729,24 @@ TEXTS: dict[str, dict[str, str]] = {
         "bookings_folder_confirmed_intro": "Эти клиенты подтвердили запись.",
         "booking_cancelled_by_client_admin_title": "❌ Клиент отменил запись",
         "booking_cancelled_by_client_admin_status": "отменена клиентом",
+        "booking_cancelled_by_admin_client_title": (
+            "❌ Ваша запись отменена администратором"
+        ),
+        "booking_cancelled_by_admin_client_body": (
+            "Услуга: {service}\n"
+            "Дата и время: {datetime}\n\n"
+            "Если у вас есть вопросы, свяжитесь с администратором."
+        ),
+        "order_cancelled_by_client_admin_title": "❌ Клиент отменил заявку",
+        "order_cancelled_by_client_admin_status": "отменена клиентом",
+        "order_cancelled_by_admin_client_title": (
+            "❌ Ваша заявка отменена администратором"
+        ),
+        "order_cancelled_by_admin_client_body": (
+            "Услуга: {service}\n\n"
+            "Если у вас есть вопросы, свяжитесь с администратором."
+        ),
+        "booking_rescheduled_by_client_admin_title": "🔄 Клиент изменил время записи",
         "booking_status_label": "Статус записи: {status}",
         "client_response_label": "Ответ клиента: {response}",
         "booking_status_pending_admin": "ожидает решения админа",
@@ -1671,6 +1768,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "my_booking_client_address": "Адрес клиента",
         "my_booking_comment": "Комментарий",
         "reschedule_booking_btn": "🔁 Перенести запись",
+        "reschedule_back_to_booking": "⬅️ Назад к записи",
         "change_location_btn": "📍 Изменить место",
         "change_address_btn": "🏠 Изменить адрес клиента",
         "change_comment_btn": "💬 Изменить комментарий",
@@ -1680,6 +1778,8 @@ TEXTS: dict[str, dict[str, str]] = {
             "Было: {old_datetime}\n"
             "Стало: {new_datetime}"
         ),
+        "reschedule_was_line": "Было: {datetime}",
+        "reschedule_became_line": "Стало: {datetime}",
         "confirm_reschedule_btn": "✅ Подтвердить перенос",
         "booking_rescheduled": "✅ Запись перенесена.",
         "service_location_changed": "✅ Место проведения изменено.",

@@ -12,7 +12,15 @@ from app.bot.keyboards.booking_edit_kb import (
     edit_location_kb,
     reschedule_confirm_kb,
     reschedule_dates_kb,
-    reschedule_times_kb,
+    reschedule_time_grid_kb,
+    reschedule_time_periods_kb,
+)
+from app.bot.utils.time_periods import (
+    Period,
+    build_period_screen_text,
+    build_time_grid_text,
+    group_slots_by_period,
+    non_empty_periods,
 )
 from app.bot.states import ClientBookingEditStates
 from app.bot.utils.callbacks import safe_callback_answer
@@ -30,12 +38,15 @@ from app.repositories import (
     WorkingBreakRepository,
 )
 from app.services.availability_service import AvailabilityService
-from app.services.booking_notification_service import notify_admins_client_cancelled
+from app.services.booking_notification_service import (
+    notify_admins_booking_rescheduled,
+    notify_admins_client_cancelled,
+)
 from app.services.booking_service import BookingService
 from app.services.exceptions import SlotUnavailableError
 from app.services.calendar_service import CalendarService
 from app.services.language_service import get_user_language
-from app.utils.datetime_utils import now_local, slot_from_timestamp, to_local_naive
+from app.utils.datetime_utils import local_timestamp, now_local, slot_from_timestamp, to_local_naive
 from app.utils.formatting import format_client_booking_detail, format_date, format_datetime
 
 router = Router()
@@ -54,6 +65,82 @@ def _availability_service(session):
 
 def _is_editable_status(booking: Booking) -> bool:
     return booking.status in (BookingStatus.PENDING, BookingStatus.CONFIRMED)
+
+
+async def _fetch_reschedule_slots(session, booking: Booking, target_date: date_cls) -> list:
+    service_repo = ServiceRepository(session)
+    availability = _availability_service(session)
+    return await availability.get_available_slots(
+        booking.service_id, target_date, service_repo, exclude_booking_id=booking.id
+    )
+
+
+async def _reschedule_show_period_screen(
+    callback: CallbackQuery,
+    state: FSMContext,
+    lang: str,
+    booking_id: int,
+    target_date: date_cls,
+) -> None:
+    async with async_session_factory() as session:
+        booking = await BookingRepository(session).get_by_id(booking_id)
+        if not booking:
+            await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+            return
+        slots = await _fetch_reschedule_slots(session, booking, target_date)
+
+    if not slots:
+        await safe_callback_answer(callback, t(lang, "no_slots"), show_alert=True)
+        return
+
+    grouped = group_slots_by_period(slots)
+    available_periods = non_empty_periods(grouped)
+    if not available_periods:
+        await safe_callback_answer(callback, t(lang, "no_slots"), show_alert=True)
+        return
+
+    await state.update_data(
+        reschedule_target_date=target_date.isoformat(),
+        reschedule_time_period=None,
+    )
+    await state.set_state(ClientBookingEditStates.reschedule_choosing_time_period)
+    await edit_or_send(
+        callback,
+        build_period_screen_text(target_date, grouped, lang),
+        reply_markup=reschedule_time_periods_kb(booking_id, available_periods, lang),
+    )
+
+
+async def _reschedule_show_time_grid(
+    callback: CallbackQuery,
+    state: FSMContext,
+    lang: str,
+    booking_id: int,
+    target_date: date_cls,
+    period: Period,
+) -> None:
+    async with async_session_factory() as session:
+        booking = await BookingRepository(session).get_by_id(booking_id)
+        if not booking:
+            await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+            return
+        slots = await _fetch_reschedule_slots(session, booking, target_date)
+
+    period_slots = group_slots_by_period(slots).get(period, [])
+    if not period_slots:
+        await _reschedule_show_period_screen(callback, state, lang, booking_id, target_date)
+        return
+
+    await state.update_data(
+        reschedule_target_date=target_date.isoformat(),
+        reschedule_time_period=period,
+    )
+    await state.set_state(ClientBookingEditStates.reschedule_choosing_time)
+    await edit_or_send(
+        callback,
+        build_time_grid_text(target_date, period, lang),
+        reply_markup=reschedule_time_grid_kb(booking_id, period_slots, lang),
+    )
 
 
 async def _notify_admins_booking_changed(
@@ -243,7 +330,7 @@ async def begin_client_reschedule(
     await state.update_data(
         flow_origin="client_edit",
         edit_booking_id=booking_id,
-        reschedule_old_ts=int(to_local_naive(booking.start_at).timestamp()),
+        reschedule_old_ts=local_timestamp(booking.start_at),
     )
     await state.set_state(ClientBookingEditStates.reschedule_choosing_date)
     await edit_or_send(
@@ -278,22 +365,83 @@ async def reschedule_choose_date(callback: CallbackQuery, lang: str, state: FSMC
         if not booking or not client or booking.client_id != client.id:
             await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
             return
-        service_repo = ServiceRepository(session)
-        availability = _availability_service(session)
-        slots = await availability.get_available_slots(
-            booking.service_id, target_date, service_repo, exclude_booking_id=booking.id
-        )
 
-    if not slots:
-        await safe_callback_answer(callback, t(lang, "no_slots"), show_alert=True)
+    await _reschedule_show_period_screen(callback, state, lang, booking_id, target_date)
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.regexp(r"^my:res:period:\d+:(morning|day|evening)$"))
+async def reschedule_choose_period(callback: CallbackQuery, lang: str, state: FSMContext) -> None:
+    parts = callback.data.split(":")
+    booking_id = int(parts[3])
+    period = parts[4]
+    data = await state.get_data()
+    if data.get("edit_booking_id") != booking_id:
+        await safe_callback_answer(callback, t(lang, "session_expired"), show_alert=True)
+        await state.clear()
+        return
+    target_date_raw = data.get("reschedule_target_date")
+    if not target_date_raw:
+        await safe_callback_answer(callback, t(lang, "session_expired"), show_alert=True)
+        await state.clear()
         return
 
-    await state.update_data(reschedule_target_date=target_date.isoformat())
-    await state.set_state(ClientBookingEditStates.reschedule_choosing_time)
-    await edit_or_send(
+    async with async_session_factory() as session:
+        booking = await BookingRepository(session).get_by_id(booking_id)
+        client = await ClientRepository(session).get_by_telegram_id(callback.from_user.id)
+        if not booking or not client or booking.client_id != client.id:
+            await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
+            return
+
+    await _reschedule_show_time_grid(
         callback,
-        f"{format_date(target_date)}\n{t(lang, 'choose_time')}",
-        reply_markup=reschedule_times_kb(booking_id, slots, lang),
+        state,
+        lang,
+        booking_id,
+        date_cls.fromisoformat(target_date_raw),
+        period,  # type: ignore[arg-type]
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.regexp(r"^my:res:back:dates:\d+$"))
+async def reschedule_back_to_dates(callback: CallbackQuery, lang: str, state: FSMContext) -> None:
+    booking_id = int(callback.data.rsplit(":", 1)[1])
+    await begin_client_reschedule(callback, booking_id, lang, state)
+
+
+@router.callback_query(F.data.regexp(r"^my:res:back:periods:\d+$"))
+async def reschedule_back_to_periods(callback: CallbackQuery, lang: str, state: FSMContext) -> None:
+    booking_id = int(callback.data.rsplit(":", 1)[1])
+    data = await state.get_data()
+    target_date_raw = data.get("reschedule_target_date")
+    if data.get("edit_booking_id") != booking_id or not target_date_raw:
+        await safe_callback_answer(callback, t(lang, "session_expired"), show_alert=True)
+        await state.clear()
+        return
+    await _reschedule_show_period_screen(
+        callback, state, lang, booking_id, date_cls.fromisoformat(target_date_raw)
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.regexp(r"^my:res:back:time:\d+$"))
+async def reschedule_back_to_time(callback: CallbackQuery, lang: str, state: FSMContext) -> None:
+    booking_id = int(callback.data.rsplit(":", 1)[1])
+    data = await state.get_data()
+    target_date_raw = data.get("reschedule_target_date")
+    period = data.get("reschedule_time_period")
+    if data.get("edit_booking_id") != booking_id or not target_date_raw or not period:
+        await safe_callback_answer(callback, t(lang, "session_expired"), show_alert=True)
+        await state.clear()
+        return
+    await _reschedule_show_time_grid(
+        callback,
+        state,
+        lang,
+        booking_id,
+        date_cls.fromisoformat(target_date_raw),
+        period,  # type: ignore[arg-type]
     )
     await safe_callback_answer(callback)
 
@@ -309,9 +457,16 @@ async def reschedule_choose_time(callback: CallbackQuery, lang: str, state: FSMC
         await state.clear()
         return
 
+    async with async_session_factory() as session:
+        booking = await BookingRepository(session).get_by_id(booking_id)
+        client = await ClientRepository(session).get_by_telegram_id(callback.from_user.id)
+        if not booking or not client or booking.client_id != client.id:
+            await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
+            await state.clear()
+            return
+
     slot = slot_from_timestamp(slot_ts)
-    old_ts = data.get("reschedule_old_ts")
-    old_dt = format_datetime(slot_from_timestamp(old_ts)) if old_ts else "—"
+    old_dt = format_datetime(to_local_naive(booking.start_at))
     await state.update_data(reschedule_new_ts=slot_ts)
     await state.set_state(ClientBookingEditStates.reschedule_confirm)
     await edit_or_send(
@@ -343,13 +498,15 @@ async def reschedule_confirm(callback: CallbackQuery, bot: Bot, lang: str, state
     except Exception:
         pass
 
-    old_ts = data.get("reschedule_old_ts")
-    old_dt = format_datetime(slot_from_timestamp(old_ts)) if old_ts else "—"
+    old_dt = "—"
     new_slot = slot_from_timestamp(data["reschedule_new_ts"])
     new_dt = format_datetime(new_slot)
 
     try:
         async with async_session_factory() as session:
+            booking_before = await BookingRepository(session).get_by_id(booking_id)
+            if booking_before:
+                old_dt = format_datetime(to_local_naive(booking_before.start_at))
             booking_service = BookingService(session)
             booking = await booking_service.reschedule_booking(
                 booking_id, callback.from_user.id, new_slot
@@ -376,7 +533,13 @@ async def reschedule_confirm(callback: CallbackQuery, bot: Bot, lang: str, state
         await edit_or_send(callback, t(lang, "error_generic"))
         return
 
-    await _notify_admins_booking_changed(bot, booking, service, old_dt, new_dt, lang)
+    await notify_admins_booking_rescheduled(
+        bot,
+        booking,
+        service,
+        old_datetime=old_dt,
+        new_datetime=new_dt,
+    )
     await state.clear()
     await edit_or_send(callback, t(lang, "booking_rescheduled"))
     await show_client_booking_detail(callback, booking_id, callback.from_user.id, lang)

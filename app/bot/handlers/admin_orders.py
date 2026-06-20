@@ -19,6 +19,7 @@ from app.database.session import async_session_factory
 from app.models import Client, ServiceOrderStatus
 from app.repositories import ServiceOrderRepository, ServiceRepository
 from app.services.order_service import add_admin_note, order_status_counts, update_order_status
+from app.services.booking_notification_service import notify_client_order_cancelled_by_admin
 from app.utils.formatting import format_order_admin
 
 router = Router()
@@ -125,6 +126,8 @@ async def admin_order_status(callback: CallbackQuery, is_admin: bool, lang: str)
     if not order:
         await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
         return
+    if status == "cancelled":
+        await notify_client_order_cancelled_by_admin(callback.bot, order, service)
     await safe_callback_answer(callback, t(lang, "order_status_updated"))
     await safe_edit_text(
         callback.message,

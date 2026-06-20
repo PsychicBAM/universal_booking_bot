@@ -43,3 +43,8 @@ def slot_from_timestamp(ts: int) -> datetime:
 
 def slot_to_callback(dt: datetime) -> str:
     return str(int(to_aware_local(dt).timestamp()))
+
+
+def local_timestamp(dt: datetime) -> int:
+    """Epoch seconds for a DB/local naive datetime in configured TIMEZONE."""
+    return int(to_aware_local(to_local_naive(dt)).timestamp())

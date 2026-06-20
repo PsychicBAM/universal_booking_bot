@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.models import Booking, BookingStatus, Service
+from app.models import Booking, BookingStatus, Service, SERVICE_TYPE_ORDER
 from app.repositories import (
     BookingRepository,
     ClientRepository,
@@ -61,6 +61,28 @@ class BookingService:
             working_breaks_repo=WorkingBreakRepository(session),
         )
 
+    async def _is_booking_service_id(self, service_id: int) -> bool:
+        service = await self.service_repo.get_by_id(service_id)
+        return bool(service and service.service_type != SERVICE_TYPE_ORDER)
+
+    async def _maybe_schedule_calendar_sync_create(self, booking: Booking) -> None:
+        if booking.status == BookingStatus.CONFIRMED and await self._is_booking_service_id(
+            booking.service_id
+        ):
+            _schedule_calendar_sync_create(booking.id)
+
+    async def _maybe_schedule_calendar_sync_update(self, booking: Booking) -> None:
+        if booking.status == BookingStatus.CONFIRMED and await self._is_booking_service_id(
+            booking.service_id
+        ):
+            _schedule_calendar_sync_update(booking.id)
+
+    async def _maybe_schedule_calendar_sync_delete(
+        self, booking: Booking, event_id: str | None
+    ) -> None:
+        if event_id and await self._is_booking_service_id(booking.service_id):
+            _schedule_calendar_sync_delete(booking.id, event_id)
+
     async def _assert_slot_available_for_write(
         self,
         service_id: int,
@@ -74,6 +96,9 @@ class BookingService:
         if not service or not service.is_active or service.archived_at is not None:
             logger.warning("Slot check rejected: service_id=%s not available", service_id)
             raise SlotUnavailableError("service_not_available")
+        if service.service_type == SERVICE_TYPE_ORDER:
+            logger.warning("Slot check rejected: service_id=%s is order type", service_id)
+            raise SlotUnavailableError("order_service_not_bookable")
 
         end_at = start_at + timedelta(minutes=service.duration_minutes)
         buffer_map = await self.service_repo.buffer_minutes_by_id()
@@ -194,7 +219,7 @@ class BookingService:
                 raise
 
         if booking.status == BookingStatus.CONFIRMED:
-            _schedule_calendar_sync_create(booking.id)
+            await self._maybe_schedule_calendar_sync_create(booking)
         return booking
 
     async def confirm_booking(self, booking_id: int) -> Booking:
@@ -204,7 +229,7 @@ class BookingService:
         booking.status = BookingStatus.CONFIRMED
         await self.session.commit()
         await self.session.refresh(booking)
-        _schedule_calendar_sync_create(booking.id)
+        await self._maybe_schedule_calendar_sync_create(booking)
         return booking
 
     async def cancel_booking(self, booking_id: int, *, telegram_id: int | None = None) -> Booking:
@@ -226,8 +251,7 @@ class BookingService:
         booking.status = BookingStatus.CANCELLED
         await self.session.commit()
         await self.session.refresh(booking)
-        if event_id:
-            _schedule_calendar_sync_delete(booking.id, event_id)
+        await self._maybe_schedule_calendar_sync_delete(booking, event_id)
         return booking
 
     async def complete_booking(self, booking_id: int) -> Booking:
@@ -423,7 +447,7 @@ class BookingService:
                 raise
 
         if booking.status == BookingStatus.CONFIRMED:
-            _schedule_calendar_sync_update(booking.id)
+            await self._maybe_schedule_calendar_sync_update(booking)
 
         return booking
 
@@ -449,7 +473,7 @@ class BookingService:
         await self.session.refresh(booking)
 
         if booking.status == BookingStatus.CONFIRMED:
-            _schedule_calendar_sync_update(booking.id)
+            await self._maybe_schedule_calendar_sync_update(booking)
         return booking
 
     async def change_client_address(
@@ -468,7 +492,7 @@ class BookingService:
         await self.session.refresh(booking)
 
         if booking.status == BookingStatus.CONFIRMED:
-            _schedule_calendar_sync_update(booking.id)
+            await self._maybe_schedule_calendar_sync_update(booking)
         return booking
 
     async def change_client_comment(
@@ -487,5 +511,5 @@ class BookingService:
         await self.session.refresh(booking)
 
         if booking.status == BookingStatus.CONFIRMED:
-            _schedule_calendar_sync_update(booking.id)
+            await self._maybe_schedule_calendar_sync_update(booking)
         return booking

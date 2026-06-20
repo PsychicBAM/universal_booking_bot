@@ -159,6 +159,98 @@ def format_client_cancelled_admin_notification(
     return "\n".join(lines)
 
 
+def format_booking_rescheduled_by_client_admin_notification(
+    booking: Booking,
+    service: Service | None,
+    lang: str,
+    *,
+    old_datetime: str,
+    new_datetime: str,
+    client_username: str | None = None,
+) -> str:
+    service_name = escape(service.name) if service else f"#{booking.service_id}"
+    tg = f"@{client_username}" if client_username else t(lang, "not_provided")
+    phone = escape(booking.client_phone or t(lang, "booking_phone_not_provided"))
+    return "\n".join(
+        [
+            t(lang, "booking_rescheduled_by_client_admin_title"),
+            "",
+            f"{t(lang, 'label_service')}: {service_name}",
+            f"{t(lang, 'label_name')}: {escape(booking.client_name)}",
+            t(lang, "admin_booking_telegram_line", username=tg),
+            f"{t(lang, 'label_phone')}: {phone}",
+            t(lang, "reschedule_was_line", datetime=old_datetime),
+            t(lang, "reschedule_became_line", datetime=new_datetime),
+        ]
+    )
+
+
+def format_booking_cancelled_by_admin_client_notification(
+    booking: Booking,
+    service: Service | None,
+    lang: str,
+) -> str:
+    service_name = escape(service.name) if service else f"#{booking.service_id}"
+    return "\n".join(
+        [
+            t(lang, "booking_cancelled_by_admin_client_title"),
+            "",
+            t(
+                lang,
+                "booking_cancelled_by_admin_client_body",
+                service=service_name,
+                datetime=format_datetime(booking.start_at),
+            ),
+        ]
+    )
+
+
+def format_order_cancelled_by_client_admin_notification(
+    order: ServiceOrder,
+    service: Service | None,
+    lang: str,
+) -> str:
+    service_name = escape(service.name) if service else f"#{order.service_id}"
+    tg = f"@{order.client_username}" if order.client_username else t(lang, "not_provided")
+    phone = escape(order.client_phone) if order.client_phone else t(lang, "not_provided")
+    lines = [
+        t(lang, "order_cancelled_by_client_admin_title"),
+        "",
+        f"{t(lang, 'label_service')}: {service_name}",
+        f"{t(lang, 'label_name')}: {escape(order.client_name or t(lang, 'not_provided'))}",
+        t(lang, "admin_booking_telegram_line", username=tg),
+        f"{t(lang, 'label_phone')}: {phone}",
+    ]
+    if order.details:
+        lines.extend(["", t(lang, "order_details_label"), escape(order.details)])
+    lines.extend(
+        [
+            "",
+            t(
+                lang,
+                "booking_status_label",
+                status=t(lang, "order_cancelled_by_client_admin_status"),
+            ),
+        ]
+    )
+    return "\n".join(lines)
+
+
+def format_order_cancelled_by_admin_client_notification(
+    order: ServiceOrder,
+    service: Service | None,
+    lang: str,
+) -> str:
+    service_name = escape(service.name) if service else f"#{order.service_id}"
+    return "\n".join(
+        [
+            t(lang, "order_cancelled_by_admin_client_title"),
+            "",
+            t(lang, "order_cancelled_by_admin_client_body", service=service_name),
+        ]
+    )
+
+
 def format_booking(
     booking: Booking,
     service: Service | None = None,

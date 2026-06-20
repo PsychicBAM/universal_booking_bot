@@ -63,7 +63,7 @@ def _parse_section_callback(data: str) -> tuple[str, int, str, int, int]:
 
 
 async def show_clients_main(event: CallbackQuery | Message, lang: str) -> None:
-    text = f"{t(lang, 'clients_title')}\n\n{t(lang, 'clients_intro')}"
+    text = f"{t(lang, 'clients_hub_simplified_title')}\n\n{t(lang, 'clients_hub_simplified_intro')}"
     keyboard = admin_clients_main_kb(lang)
     if isinstance(event, CallbackQuery):
         await edit_or_send(event, text, reply_markup=keyboard)
@@ -79,8 +79,8 @@ async def show_clients_list(
 ) -> None:
     async with async_session_factory() as session:
         page_items, page, total_pages = await list_clients(session, filter_key, page=page)
-    filter_label = t(lang, f"clients_filter_{filter_key}")
-    lines = [t(lang, "clients_title"), "", filter_label, ""]
+    filter_label = t(lang, "clients_all_button") if filter_key == "all" else t(lang, f"clients_filter_{filter_key}")
+    lines = [t(lang, "clients_hub_simplified_title"), "", filter_label, ""]
     if not page_items:
         lines.append(t(lang, "clients_no_results"))
     text = "\n".join(lines)

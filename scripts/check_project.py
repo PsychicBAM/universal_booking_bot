@@ -86,6 +86,12 @@ def _check_symbol_imports(app_dir: Path) -> None:
             "app.bot.utils.booking_labels",
             {"booking_labels.py"},
         ),
+        (
+            "get_settings(",
+            "get_settings",
+            "app.config",
+            {"config.py"},
+        ),
     ]
     for path in app_dir.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
@@ -117,6 +123,9 @@ def _check_callback_prefix_handlers() -> None:
         "bk:back:",
         "my:view:",
         "my:cancel:",
+        "my:res:",
+        "my:res:period:",
+        "my:res:back:",
         "adm_confirm:",
         "adm_cancel:",
         "adm_msg:",
@@ -131,6 +140,10 @@ def _check_callback_prefix_handlers() -> None:
         "br:",
         "ord:",
         "cb:order:",
+        "myact:",
+        "svc:active",
+        "svc:hub",
+        "svc:search",
         "svc:type:",
         "set:modes:",
         "unav:",
@@ -382,7 +395,7 @@ def main() -> int:
         from app.bot.keyboards.admin_clients_kb import admin_clients_main_kb, admin_client_detail_kb
 
         main_kb = admin_clients_main_kb("en")
-        if len(main_kb.inline_keyboard) < 4:
+        if len(main_kb.inline_keyboard) != 3:
             print("FAIL: clients main keyboard rows")
             return 1
         detail_kb = admin_client_detail_kb(1, "all", 0, lang="en")
@@ -1167,33 +1180,333 @@ def main() -> int:
         assert default_service_type_for_modes(ServiceModes(True, False)) == SERVICE_TYPE_BOOKING
         assert default_service_type_for_modes(ServiceModes(False, True)) == SERVICE_TYPE_ORDER
 
-        from app.bot.keyboards import admin_menu, main_menu
+        from app.bot.keyboards.admin_clients_kb import admin_clients_main_kb
+        from app.bot.handlers.admin import _services_hub_text
+        from app.bot.keyboards import (
+            ADMIN_SERVICES_TEXTS,
+            MAIN_MENU_SERVICES_TEXTS,
+            admin_menu,
+            admin_services_hub_kb,
+            main_menu,
+        )
         from app.bot.i18n import t
+        from app.utils.formatting import (
+            format_booking_rescheduled_by_client_admin_notification,
+            format_order_cancelled_by_admin_client_notification,
+            format_order_cancelled_by_client_admin_notification,
+        )
+
+        # Menu routing — admin vs client services buttons must differ
+        if ADMIN_SERVICES_TEXTS & MAIN_MENU_SERVICES_TEXTS:
+            raise AssertionError(
+                "menu routing — admin services button text must not overlap client services button text"
+            )
+        if t("ru", "admin_services") == t("ru", "main_menu_services"):
+            raise AssertionError("menu routing — RU admin/client services labels must differ")
+        if t("en", "admin_services") == t("en", "main_menu_services"):
+            raise AssertionError("menu routing — EN admin/client services labels must differ")
+
+        admin_hub_text = _services_hub_text(2, 1, 0, "ru")
+        if t("ru", "services_hub_intro") not in admin_hub_text:
+            raise AssertionError("menu routing — admin services hub intro missing")
+        if t("ru", "choose_service") in admin_hub_text:
+            raise AssertionError("menu routing — admin hub must not use client choose_service text")
+
+        admin_both = {
+            btn.text for row in admin_menu("ru", booking_enabled=True, order_enabled=True).keyboard for btn in row
+        }
+        if t("ru", "admin_services") not in admin_both:
+            raise AssertionError("menu routing — admin panel must show manage services button")
+        if t("ru", "main_menu_services") in admin_both:
+            raise AssertionError("menu routing — client services button must not appear in admin menu")
+
+        # Test A — compact client menu when both modes enabled
+        client_both = {
+            btn.text for row in main_menu("ru", booking_enabled=True, order_enabled=True).keyboard for btn in row
+        }
+        for label in (
+            t("ru", "main_menu_services"),
+            t("ru", "main_menu_my_activity"),
+            t("ru", "contact_admin"),
+        ):
+            if label not in client_both:
+                raise AssertionError(f"test A — missing compact menu button: {label}")
+        if t("ru", "book_appointment") in client_both or t("ru", "my_bookings") in client_both:
+            raise AssertionError("test A — legacy booking buttons should be hidden in compact menu")
+
+        # Test B — booking-only client menu
+        client_booking = {
+            btn.text for row in main_menu("ru", booking_enabled=True, order_enabled=False).keyboard for btn in row
+        }
+        if t("ru", "order_services_button") in client_booking or t("ru", "my_orders_button") in client_booking:
+            raise AssertionError("test B — order buttons must be hidden in booking-only mode")
+
+        # Test C — order-only client menu
+        client_order = {
+            btn.text for row in main_menu("ru", booking_enabled=False, order_enabled=True).keyboard for btn in row
+        }
+        if t("ru", "book_appointment") in client_order or t("ru", "my_bookings") in client_order:
+            raise AssertionError("test C — booking buttons must be hidden in order-only mode")
+
+        # Test D — simplified clients hub
+        client_hub = {btn.text for row in admin_clients_main_kb("ru").inline_keyboard for btn in row}
+        if t("ru", "clients_filter_upcoming") in client_hub:
+            raise AssertionError("test D — extra client folders must be removed from hub")
+        for label in (
+            t("ru", "clients_all_button"),
+            t("ru", "clients_search_button"),
+            t("ru", "clients_back_admin"),
+        ):
+            if label not in client_hub:
+                raise AssertionError(f"test D — missing clients hub button: {label}")
+
+        # Test E — services hub folders
+        services_hub = {
+            btn.text
+            for row in admin_services_hub_kb(active_count=2, disabled_count=1, archived_count=0, lang="ru").inline_keyboard
+            for btn in row
+        }
+        for label in (
+            t("ru", "services_folder_active", count="2"),
+            t("ru", "services_folder_disabled", count="1"),
+            t("ru", "services_folder_archive", count="0"),
+        ):
+            if label not in services_hub:
+                raise AssertionError(f"test E — missing services folder: {label}")
+
+        # Test F — active services grouping/sorting
+        from types import SimpleNamespace
+
+        from app.bot.keyboards import admin_active_services_grouped_kb
+
+        services = [
+            SimpleNamespace(id=1, name="Zeta", service_type=SERVICE_TYPE_ORDER),
+            SimpleNamespace(id=2, name="Alpha", service_type=SERVICE_TYPE_BOOKING),
+            SimpleNamespace(id=3, name="Beta", service_type=SERVICE_TYPE_ORDER),
+        ]
+        labels = [
+            btn.text
+            for row in admin_active_services_grouped_kb(services, "ru").inline_keyboard
+            for btn in row
+            if btn.callback_data.startswith("adm_svc:")
+        ]
+        if labels != ["📅 Alpha", "📝 Beta", "📝 Zeta"]:
+            raise AssertionError(f"test F — grouped services order mismatch: {labels}")
+
+        # Test G — client cancels order admin notification
+        order = SimpleNamespace(
+            id=7,
+            service_id=1,
+            client_name="Ivan",
+            client_phone="+7999",
+            client_username="ivan",
+            details="Need a bot",
+            status="cancelled",
+        )
+        service = SimpleNamespace(id=1, name="Order a bot", service_type=SERVICE_TYPE_ORDER)
+        admin_cancel_order_text = format_order_cancelled_by_client_admin_notification(order, service, "ru")
+        if "❌ Клиент отменил заявку" not in admin_cancel_order_text:
+            raise AssertionError("test G — admin order cancel notification title missing")
+        if "Order a bot" not in admin_cancel_order_text:
+            raise AssertionError("test G — admin order cancel notification service missing")
+
+        # Test H — admin cancels order client notification
+        client_cancel_order_text = format_order_cancelled_by_admin_client_notification(order, service, "ru")
+        if "❌ Ваша заявка отменена администратором" not in client_cancel_order_text:
+            raise AssertionError("test H — client order cancel notification title missing")
+
+        # Test I — client reschedules booking admin notification
+        from datetime import datetime
+
+        booking = SimpleNamespace(
+            id=5,
+            service_id=2,
+            client_id=1,
+            client_name="Maria",
+            client_phone="+7888",
+            start_at=datetime(2026, 6, 22, 21, 0),
+        )
+        book_service = SimpleNamespace(id=2, name="Урок", service_type=SERVICE_TYPE_BOOKING)
+        reschedule_text = format_booking_rescheduled_by_client_admin_notification(
+            booking,
+            book_service,
+            "ru",
+            old_datetime="22.06.2026 21:00",
+            new_datetime="22.06.2026 17:00",
+        )
+        if "22.06.2026 21:00" not in reschedule_text or "22.06.2026 17:00" not in reschedule_text:
+            raise AssertionError("test I — reschedule notification must include old/new local datetimes")
+
+        # Notification service — sync/async builders must resolve to str
+        import asyncio
+        import inspect
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.services.booking_notification_service import _resolve_text_builder
+
+        sync_text = asyncio.run(_resolve_text_builder(lambda lang: f"ok:{lang}", "ru"))
+        if sync_text != "ok:ru":
+            raise AssertionError("notification test A — sync builder must return str")
+
+        async def async_builder(lang: str) -> str:
+            return f"async:{lang}"
+
+        async_text = asyncio.run(_resolve_text_builder(async_builder, "en"))
+        if async_text != "async:en":
+            raise AssertionError("notification test B — async builder must be awaited")
+
+        try:
+            asyncio.run(_resolve_text_builder(lambda lang: 123, "ru"))  # type: ignore[return-value]
+            raise AssertionError("notification test C — non-str builder must fail type check")
+        except TypeError:
+            pass
+
+        sent_texts: list = []
+
+        async def capture_send(chat_id, text, **kwargs):
+            sent_texts.append(text)
+
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock(side_effect=capture_send)
+
+        from app.services.booking_notification_service import notify_admins_client_cancelled
+
+        cancel_booking = SimpleNamespace(
+            id=1,
+            service_id=1,
+            client_id=1,
+            client_name="Test",
+            client_phone="+7999",
+            start_at=datetime(2026, 6, 23, 10, 0),
+            service_location_title=None,
+            service_location_address=None,
+            location_text=None,
+            client_comment=None,
+        )
+        cancel_service = SimpleNamespace(id=1, name="Урок", requires_location=False, ask_client_comment=False)
+
+        async def fake_username(_client_id: int):
+            return "testuser"
+
+        with patch(
+            "app.services.booking_notification_service._load_client_username",
+            new=fake_username,
+        ), patch(
+            "app.services.booking_notification_service.get_settings",
+            return_value=SimpleNamespace(admin_ids=[1], default_language="ru"),
+        ), patch(
+            "app.services.booking_notification_service.get_user_language",
+            new=AsyncMock(return_value="ru"),
+        ):
+            asyncio.run(
+                notify_admins_client_cancelled(mock_bot, cancel_booking, cancel_service)
+            )
+
+        if not sent_texts or not isinstance(sent_texts[0], str):
+            raise AssertionError("notification test C — send_message must receive str")
+        if inspect.iscoroutine(sent_texts[0]):
+            raise AssertionError("notification test C — coroutine must not be sent as text")
+        if "❌ Клиент отменил запись" not in sent_texts[0]:
+            raise AssertionError("notification test G — client cancel admin text missing")
+
+        from app.utils.formatting import format_booking_cancelled_by_admin_client_notification
+
+        admin_cancel_client_text = format_booking_cancelled_by_admin_client_notification(
+            cancel_booking, cancel_service, "ru"
+        )
+        if not isinstance(admin_cancel_client_text, str) or "❌ Ваша запись отменена администратором" not in admin_cancel_client_text:
+            raise AssertionError("notification test H — admin cancel client text missing")
+
+        order_cancel_admin_text = format_order_cancelled_by_client_admin_notification(order, service, "ru")
+        if not isinstance(order_cancel_admin_text, str):
+            raise AssertionError("notification test I-order — order cancel admin text must be str")
+
+        # Reschedule UI — period screen and 3-column time grid
+        from datetime import date
+
+        from app.bot.keyboards.booking_edit_kb import (
+            reschedule_dates_kb,
+            reschedule_time_grid_kb,
+            reschedule_time_periods_kb,
+        )
+
+        booking_edit_src = (ROOT / "app" / "bot" / "handlers" / "booking_edit.py").read_text(encoding="utf-8")
+        if "build_period_screen_text" not in booking_edit_src:
+            raise AssertionError("notification test D — reschedule must use period screen helpers")
+        if "reschedule_times_kb" in booking_edit_src:
+            raise AssertionError("notification test D — old one-column reschedule_times_kb must not be used")
+
+        res_date_rows = reschedule_dates_kb(1, [date(2026, 6, 25), date(2026, 6, 26), date(2026, 6, 27)], "ru").inline_keyboard
+        if len(res_date_rows[0]) != 3:
+            raise AssertionError("notification test E — reschedule dates must use 3 columns")
+
+        res_period_rows = reschedule_time_periods_kb(1, ["day"], "ru").inline_keyboard
+        period_callbacks = [btn.callback_data for row in res_period_rows for btn in row]
+        if "my:res:period:1:day" not in period_callbacks:
+            raise AssertionError("notification test D — reschedule period callbacks missing")
+
+        res_grid_rows = reschedule_time_grid_kb(
+            1,
+            [
+                datetime(2026, 6, 25, 12, 0),
+                datetime(2026, 6, 25, 12, 30),
+                datetime(2026, 6, 25, 13, 0),
+            ],
+            "ru",
+        ).inline_keyboard
+        time_row = next(row for row in res_grid_rows if row[0].callback_data.startswith("my:res:time:"))
+        if len(time_row) != 3:
+            raise AssertionError("notification test E — reschedule time grid must use 3 columns")
+
+        if "Было:" not in reschedule_text or "Стало:" not in reschedule_text:
+            raise AssertionError("notification test F — reschedule notification must include Было/Стало")
+
+        # Test J/K — calendar sync guards for order vs booking services
+
+        from app.models import BookingStatus
+        from app.services.booking_service import BookingService
+
+        booking_obj = MagicMock()
+        booking_obj.id = 10
+        booking_obj.service_id = 99
+        booking_obj.status = BookingStatus.CONFIRMED
+
+        bs = BookingService.__new__(BookingService)
+        bs.service_repo = AsyncMock()
+        bs.service_repo.get_by_id = AsyncMock(
+            return_value=SimpleNamespace(service_type=SERVICE_TYPE_ORDER)
+        )
+
+        with patch("app.services.booking_service._schedule_calendar_sync_create") as create_sync:
+            asyncio.run(bs._maybe_schedule_calendar_sync_create(booking_obj))
+            if create_sync.called:
+                raise AssertionError("test J — order service must not schedule calendar create")
+
+        bs.service_repo.get_by_id = AsyncMock(
+            return_value=SimpleNamespace(service_type=SERVICE_TYPE_BOOKING)
+        )
+        with patch("app.services.booking_service._schedule_calendar_sync_create") as create_sync:
+            asyncio.run(bs._maybe_schedule_calendar_sync_create(booking_obj))
+            if not create_sync.called:
+                raise AssertionError("test K — booking service must still schedule calendar create")
 
         booking_only_admin = {btn.text for row in admin_menu("ru", booking_enabled=True, order_enabled=False).keyboard for btn in row}
         if t("ru", "orders_admin_button") in booking_only_admin:
-            raise AssertionError("test A — orders button hidden when order mode off")
+            raise AssertionError("admin menu — orders button hidden when order mode off")
         both_admin = {btn.text for row in admin_menu("ru", booking_enabled=True, order_enabled=True).keyboard for btn in row}
         if t("ru", "orders_admin_button") not in both_admin:
-            raise AssertionError("test B — orders button shown when order mode on")
-        order_only_admin = {btn.text for row in admin_menu("ru", booking_enabled=False, order_enabled=True).keyboard for btn in row}
-        if t("ru", "schedule_button") in order_only_admin or t("ru", "admin_bookings") in order_only_admin:
-            raise AssertionError("test H — schedule/bookings hidden in order-only mode")
-
-        client_both = {btn.text for row in main_menu("ru", booking_enabled=True, order_enabled=True).keyboard for btn in row}
-        if t("ru", "my_orders_button") not in client_both or t("ru", "my_bookings") not in client_both:
-            raise AssertionError("test G — client menu shows both my bookings and my orders")
+            raise AssertionError("admin menu — orders button shown when order mode on")
 
         from app.bot.keyboards.service_media_kb import client_service_card_kb
 
         order_cb = client_service_card_kb(1, "ru", service_type=SERVICE_TYPE_ORDER).inline_keyboard[0][0].callback_data
         if order_cb != "cb:order:1":
-            raise AssertionError("test D — order service card uses cb:order")
+            raise AssertionError("order service card uses cb:order")
         book_cb = client_service_card_kb(1, "ru", service_type=SERVICE_TYPE_BOOKING).inline_keyboard[0][0].callback_data
         if book_cb != "cb:book:1":
-            raise AssertionError("test C — booking service card uses cb:book")
+            raise AssertionError("booking service card uses cb:book")
 
-        print("OK: service types and order modes")
+        print("OK: UX menus, notifications, and calendar guards")
     except Exception as exc:
         print(f"FAIL: service types — {exc}")
         return 1

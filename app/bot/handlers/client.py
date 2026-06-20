@@ -20,6 +20,7 @@ from app.bot.utils.service_helpers import (
 from app.bot.utils.telegram_ui import edit_or_send
 from app.bot.keyboards import (
     BOOK_APPOINTMENT_TEXTS,
+    MAIN_MENU_SERVICES_TEXTS,
     MY_BOOKINGS_TEXTS,
     SKIP_TEXTS,
     admin_menu,
@@ -39,6 +40,7 @@ from app.bot.utils.time_periods import (
     non_empty_periods,
 )
 from app.bot.states import BookingStates
+from app.config import get_settings
 from app.bot.booking_client_data import (
     begin_name_collection,
     begin_phone_edit,
@@ -491,6 +493,21 @@ async def _notify_admins_new_booking(bot, booking, service, lang: str) -> None:
             pass
 
 
+@router.message(F.text.in_(MAIN_MENU_SERVICES_TEXTS))
+async def start_unified_services_from_client(message: Message, state: FSMContext, lang: str) -> None:
+    async with async_session_factory() as session:
+        services = await ServiceRepository(session).list_client_services()
+    if not services:
+        await message.answer(t(lang, "no_services"))
+        return
+    await state.update_data(flow_origin="client", flow_kind="unified")
+    await state.set_state(BookingStates.choosing_service)
+    await message.answer(
+        t(lang, "choose_service"),
+        reply_markup=services_kb(services, lang, show_type_icons=True),
+    )
+
+
 @router.message(F.text.in_(BOOK_APPOINTMENT_TEXTS))
 async def start_booking(message: Message, state: FSMContext, lang: str) -> None:
     async with async_session_factory() as session:
@@ -522,7 +539,8 @@ async def view_service(callback: CallbackQuery, state: FSMContext, lang: str, bo
         videos = await ServiceMediaRepository(session).count_videos(service_id)
     t_db = time.perf_counter() - t0
 
-    await state.update_data(flow_origin="client", flow_kind="booking")
+    flow_kind = (await state.get_data()).get("flow_kind", "booking")
+    await state.update_data(flow_origin="client", flow_kind=flow_kind)
     await state.set_state(BookingStates.choosing_service)
     chat_id = callback.message.chat.id
     try:
@@ -563,26 +581,41 @@ async def view_service(callback: CallbackQuery, state: FSMContext, lang: str, bo
     )
 
 
+async def _services_for_back(state: FSMContext, session) -> tuple[list, bool]:
+    data = await state.get_data()
+    flow_kind = data.get("flow_kind", "booking")
+    repo = ServiceRepository(session)
+    if flow_kind == "order":
+        return await repo.list_client_services(service_type=SERVICE_TYPE_ORDER), False
+    if flow_kind == "unified":
+        return await repo.list_client_services(), True
+    return await repo.list_client_services(service_type=SERVICE_TYPE_BOOKING), False
+
+
 @router.callback_query(BookingStates.choosing_service_location, F.data == "cb:svc_back")
 @router.callback_query(BookingStates.choosing_service, F.data == "cb:svc_back")
 async def back_to_services(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
     async with async_session_factory() as session:
-        services = await ServiceRepository(session).list_client_services(
-            service_type=SERVICE_TYPE_BOOKING
-        )
+        services, show_icons = await _services_for_back(state, session)
     if not services:
         await edit_or_send(callback, t(lang, "no_services"))
         await state.clear()
         await safe_callback_answer(callback)
         return
     await state.set_state(BookingStates.choosing_service)
-    await state.update_data(flow_kind="booking")
+    data = await state.get_data()
+    flow_kind = data.get("flow_kind", "booking")
+    await state.update_data(flow_kind=flow_kind)
     await state.update_data(
         service_location_id=None,
         service_location_title=None,
         service_location_address=None,
     )
-    await edit_or_send(callback, t(lang, "choose_service"), reply_markup=services_kb(services, lang))
+    await edit_or_send(
+        callback,
+        t(lang, "choose_service"),
+        reply_markup=services_kb(services, lang, show_type_icons=show_icons),
+    )
     await safe_callback_answer(callback)
 
 

@@ -18,14 +18,19 @@ def main_menu(
     order_enabled: bool = False,
 ) -> ReplyKeyboardMarkup:
     rows: list[list[KeyboardButton]] = []
-    if booking_enabled:
-        rows.append([KeyboardButton(text=t(lang, "book_appointment"))])
-    if order_enabled:
-        rows.append([KeyboardButton(text=t(lang, "order_services_button"))])
-    if booking_enabled:
-        rows.append([KeyboardButton(text=t(lang, "my_bookings"))])
-    if order_enabled:
-        rows.append([KeyboardButton(text=t(lang, "my_orders_button"))])
+    compact = booking_enabled and order_enabled
+    if compact:
+        rows.append([KeyboardButton(text=t(lang, "main_menu_services"))])
+        rows.append([KeyboardButton(text=t(lang, "main_menu_my_activity"))])
+    else:
+        if booking_enabled:
+            rows.append([KeyboardButton(text=t(lang, "book_appointment"))])
+        if order_enabled:
+            rows.append([KeyboardButton(text=t(lang, "order_services_button"))])
+        if booking_enabled:
+            rows.append([KeyboardButton(text=t(lang, "my_bookings"))])
+        if order_enabled:
+            rows.append([KeyboardButton(text=t(lang, "my_orders_button"))])
     rows.append([KeyboardButton(text=t(lang, "contact_admin"))])
     if is_language_switching_enabled():
         rows.append([KeyboardButton(text=t(lang, "language"))])
@@ -128,20 +133,42 @@ def language_kb(enabled: list[str] | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def services_kb(services: list[Service], lang: str = "ru") -> InlineKeyboardMarkup:
-    buttons = [
-        [InlineKeyboardButton(text=s.name, callback_data=f"svc:{s.id}")]
-        for s in services
-    ]
+def services_kb(
+    services: list[Service],
+    lang: str = "ru",
+    *,
+    show_type_icons: bool = False,
+) -> InlineKeyboardMarkup:
+    from app.models import SERVICE_TYPE_ORDER
+
+    buttons = []
+    for s in services:
+        if show_type_icons:
+            icon = "📝" if s.service_type == SERVICE_TYPE_ORDER else "📅"
+            label = f"{icon} {s.name}"
+        else:
+            label = s.name
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f"svc:{s.id}")])
     buttons.append([InlineKeyboardButton(text=t(lang, "cancel"), callback_data="cancel")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def my_activity_kb(lang: str = "ru") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(lang, "my_activity_bookings"), callback_data="myact:bookings")],
+            [InlineKeyboardButton(text=t(lang, "my_activity_orders"), callback_data="myact:orders")],
+            [InlineKeyboardButton(text=t(lang, "back_main"), callback_data="myact:back")],
+        ]
+    )
 
 
 def times_kb(slots: list, lang: str = "ru", prefix: str = "time") -> InlineKeyboardMarkup:
     """Legacy alias — uses compact 3-column time grid."""
     from app.bot.keyboards.booking_time_kb import time_grid_kb
+    from app.utils.datetime_utils import slot_to_callback
 
-    return time_grid_kb(slots, lang, prefix=prefix)
+    return time_grid_kb(slots, lang, time_cb=lambda slot: f"{prefix}:{slot_to_callback(slot)}")
 
 
 def confirm_kb(lang: str = "ru") -> InlineKeyboardMarkup:
@@ -189,18 +216,82 @@ def booking_actions_kb(booking_id: int, can_cancel: bool = True, lang: str = "ru
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def admin_active_services_kb(services: list[Service], lang: str = "ru") -> InlineKeyboardMarkup:
-    buttons = [[InlineKeyboardButton(text=t(lang, "add_service"), callback_data="adm_svc:add")]]
-    for s in services:
-        buttons.append(
-            [InlineKeyboardButton(text=f"✅ {s.name}", callback_data=f"adm_svc:{s.id}")]
-        )
-    buttons.append(
-        [InlineKeyboardButton(text=t(lang, "services_disabled_button"), callback_data="svc:disabled")]
+def admin_services_hub_kb(
+    *,
+    active_count: int,
+    disabled_count: int,
+    archived_count: int,
+    lang: str = "ru",
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(lang, "add_service"), callback_data="adm_svc:add")],
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "services_folder_active", count=str(active_count)),
+                    callback_data="svc:active",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "services_folder_disabled", count=str(disabled_count)),
+                    callback_data="svc:disabled",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "services_folder_archive", count=str(archived_count)),
+                    callback_data="svc:archive",
+                )
+            ],
+            [InlineKeyboardButton(text=t(lang, "services_search_button"), callback_data="svc:search")],
+            [InlineKeyboardButton(text=t(lang, "back_to_admin_panel"), callback_data="svc:back")],
+        ]
     )
-    buttons.append([InlineKeyboardButton(text=t(lang, "archived_services"), callback_data="svc:archive")])
-    buttons.append([InlineKeyboardButton(text=t(lang, "back_to_admin_panel"), callback_data="svc:back")])
+
+
+def _service_type_prefix(service: Service) -> str:
+    from app.models import SERVICE_TYPE_ORDER
+
+    return "📝" if service.service_type == SERVICE_TYPE_ORDER else "📅"
+
+
+def admin_active_services_grouped_kb(services: list[Service], lang: str = "ru") -> InlineKeyboardMarkup:
+    from app.models import SERVICE_TYPE_ORDER
+
+    booking_services = sorted(
+        [s for s in services if s.service_type != SERVICE_TYPE_ORDER],
+        key=lambda s: s.name.lower(),
+    )
+    order_services = sorted(
+        [s for s in services if s.service_type == SERVICE_TYPE_ORDER],
+        key=lambda s: s.name.lower(),
+    )
+    buttons: list[list[InlineKeyboardButton]] = []
+    for service in booking_services:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{_service_type_prefix(service)} {service.name}",
+                    callback_data=f"adm_svc:{service.id}",
+                )
+            ]
+        )
+    for service in order_services:
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{_service_type_prefix(service)} {service.name}",
+                    callback_data=f"adm_svc:{service.id}",
+                )
+            ]
+        )
+    buttons.append([InlineKeyboardButton(text=t(lang, "back_to_services"), callback_data="svc:hub")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_active_services_kb(services: list[Service], lang: str = "ru") -> InlineKeyboardMarkup:
+    return admin_active_services_grouped_kb(services, lang)
 
 
 def admin_disabled_services_kb(services: list[Service], lang: str = "ru") -> InlineKeyboardMarkup:
@@ -214,7 +305,7 @@ def admin_disabled_services_kb(services: list[Service], lang: str = "ru") -> Inl
                 )
             ]
         )
-    buttons.append([InlineKeyboardButton(text=t(lang, "back_to_services"), callback_data="svc:list")])
+    buttons.append([InlineKeyboardButton(text=t(lang, "back_to_services"), callback_data="svc:hub")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -226,7 +317,23 @@ def admin_archived_services_kb(services: list[Service], lang: str = "ru") -> Inl
         )
     if not buttons:
         buttons = [[InlineKeyboardButton(text=t(lang, "archive_empty"), callback_data="noop")]]
-    buttons.append([InlineKeyboardButton(text=t(lang, "back_to_services"), callback_data="svc:list")])
+    buttons.append([InlineKeyboardButton(text=t(lang, "back_to_services"), callback_data="svc:hub")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def admin_service_search_results_kb(services: list[Service], lang: str = "ru") -> InlineKeyboardMarkup:
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text=f"{_service_type_prefix(s)} {s.name}",
+                callback_data=f"adm_svc:{s.id}",
+            )
+        ]
+        for s in services
+    ]
+    if not buttons:
+        buttons = [[InlineKeyboardButton(text=t(lang, "services_search_no_results"), callback_data="noop")]]
+    buttons.append([InlineKeyboardButton(text=t(lang, "back_to_services"), callback_data="svc:hub")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -333,6 +440,8 @@ def days_kb(lang: str = "ru", prefix: str = "wh_day") -> InlineKeyboardMarkup:
 
 
 BOOK_APPOINTMENT_TEXTS = all_texts("book_appointment")
+MAIN_MENU_SERVICES_TEXTS = all_texts("main_menu_services")
+MAIN_MENU_MY_ACTIVITY_TEXTS = all_texts("main_menu_my_activity")
 ORDER_SERVICES_TEXTS = all_texts("order_services_button")
 MY_BOOKINGS_TEXTS = all_texts("my_bookings")
 MY_ORDERS_TEXTS = all_texts("my_orders_button")
@@ -367,6 +476,8 @@ SKIP_TEXTS = all_texts("skip")
 
 _MENU_TEXT_KEYS = (
     "book_appointment",
+    "main_menu_services",
+    "main_menu_my_activity",
     "order_services_button",
     "my_bookings",
     "my_orders_button",

@@ -1,7 +1,6 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.bot.i18n import t
-from app.services.client_history_service import ClientStats, format_client_list_label
 
 DEFAULT_FILTER = "all"
 
@@ -19,44 +18,29 @@ def _section_cb(section: str, client_id: int, filter_key: str, page: int, sectio
 
 
 def admin_clients_main_kb(lang: str = "ru") -> InlineKeyboardMarkup:
-    filters = (
-        ("upcoming", "clients_filter_upcoming"),
-        ("visited", "clients_filter_visited"),
-        ("new", "clients_filter_new"),
-        ("returning", "clients_filter_returning"),
-        ("cancelled", "clients_filter_cancelled"),
-        ("all", "clients_filter_all"),
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "clients_all_button"),
+                    callback_data=_list_cb(DEFAULT_FILTER, 0),
+                )
+            ],
+            [InlineKeyboardButton(text=t(lang, "clients_search_button"), callback_data="adm_cli:search")],
+            [InlineKeyboardButton(text=t(lang, "clients_back_admin"), callback_data="adm_cli:admin_back")],
+        ]
     )
-    rows: list[list[InlineKeyboardButton]] = []
-    row: list[InlineKeyboardButton] = []
-    for idx, (key, label_key) in enumerate(filters):
-        row.append(
-            InlineKeyboardButton(
-                text=t(lang, label_key),
-                callback_data=_list_cb(key, 0),
-            )
-        )
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    rows.append(
-        [InlineKeyboardButton(text=t(lang, "clients_search"), callback_data="adm_cli:search")]
-    )
-    rows.append(
-        [InlineKeyboardButton(text=t(lang, "clients_back_admin"), callback_data="adm_cli:admin_back")]
-    )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def admin_clients_list_kb(
-    clients: list[ClientStats],
+    clients: list,
     filter_key: str,
     page: int,
     total_pages: int,
     lang: str = "ru",
 ) -> InlineKeyboardMarkup:
+    from app.services.client_history_service import format_client_list_label
+
     rows: list[list[InlineKeyboardButton]] = []
     for stats in clients:
         rows.append(
@@ -98,30 +82,30 @@ def admin_client_detail_kb(
     lang: str = "ru",
 ) -> InlineKeyboardMarkup:
     rows = [
-            [
-                InlineKeyboardButton(
-                    text=t(lang, "client_future_bookings"),
-                    callback_data=_section_cb("future", client_id, filter_key, page, 0),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=t(lang, "client_booking_history"),
-                    callback_data=_section_cb("hist", client_id, filter_key, page, 0),
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=t(lang, "client_message_button"),
-                    callback_data=f"adm_cli:msg:{client_id}:{filter_key}:{page}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=t(lang, "client_send_confirmation_nearest"),
-                    callback_data=f"adm_cli:confirm:{client_id}:{filter_key}:{page}",
-                )
-            ],
+        [
+            InlineKeyboardButton(
+                text=t(lang, "client_future_bookings"),
+                callback_data=_section_cb("future", client_id, filter_key, page, 0),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=t(lang, "client_booking_history"),
+                callback_data=_section_cb("hist", client_id, filter_key, page, 0),
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=t(lang, "client_message_button"),
+                callback_data=f"adm_cli:msg:{client_id}:{filter_key}:{page}",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text=t(lang, "client_send_confirmation_nearest"),
+                callback_data=f"adm_cli:confirm:{client_id}:{filter_key}:{page}",
+            )
+        ],
     ]
     if username:
         rows.insert(
@@ -194,9 +178,11 @@ def admin_client_bookings_kb(
 
 
 def admin_clients_search_results_kb(
-    clients: list[ClientStats],
+    clients: list,
     lang: str = "ru",
 ) -> InlineKeyboardMarkup:
+    from app.services.client_history_service import format_client_list_label
+
     rows: list[list[InlineKeyboardButton]] = []
     for stats in clients[:20]:
         rows.append(

@@ -19,6 +19,7 @@ class BookingStates(StatesGroup):
 
 class ClientBookingEditStates(StatesGroup):
     reschedule_choosing_date = State()
+    reschedule_choosing_time_period = State()
     reschedule_choosing_time = State()
     reschedule_confirm = State()
     changing_service_location = State()
@@ -36,6 +37,7 @@ class AdminServiceStates(StatesGroup):
     buffer_manual = State()
     price = State()
     editing_field = State()
+    searching = State()
 
 
 class OrderStates(StatesGroup):

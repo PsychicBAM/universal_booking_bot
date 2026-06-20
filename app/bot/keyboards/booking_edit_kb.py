@@ -1,9 +1,10 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.bot.i18n import t
+from app.bot.keyboards.booking_time_kb import dates_kb, time_grid_kb, time_periods_kb
+from app.bot.utils.time_periods import Period
 from app.models import ServiceLocation
 from app.utils.datetime_utils import slot_to_callback
-from app.utils.formatting import format_date
 
 
 def client_booking_detail_kb(
@@ -44,37 +45,38 @@ def client_booking_detail_kb(
 
 
 def reschedule_dates_kb(booking_id: int, dates: list, lang: str = "ru") -> InlineKeyboardMarkup:
-    rows = [
-        [
-            InlineKeyboardButton(
-                text=format_date(d),
-                callback_data=f"my:res:date:{booking_id}:{d.isoformat()}",
-            )
-        ]
-        for d in dates
-    ]
-    rows.append(
-        [InlineKeyboardButton(text=t(lang, "back"), callback_data=f"my:view:{booking_id}")]
+    return dates_kb(
+        dates,
+        lang,
+        date_cb=lambda d: f"my:res:date:{booking_id}:{d.isoformat()}",
+        back_cb=f"my:view:{booking_id}",
+        cancel_cb=f"my:view:{booking_id}",
+        back_label_key="reschedule_back_to_booking",
     )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def reschedule_times_kb(booking_id: int, slots: list, lang: str = "ru") -> InlineKeyboardMarkup:
-    from app.utils.formatting import format_time
-
-    rows = [
-        [
-            InlineKeyboardButton(
-                text=format_time(slot),
-                callback_data=f"my:res:time:{booking_id}:{slot_to_callback(slot)}",
-            )
-        ]
-        for slot in slots
-    ]
-    rows.append(
-        [InlineKeyboardButton(text=t(lang, "back"), callback_data=f"my:res:{booking_id}")]
+def reschedule_time_periods_kb(
+    booking_id: int,
+    available_periods: list[Period],
+    lang: str = "ru",
+) -> InlineKeyboardMarkup:
+    return time_periods_kb(
+        available_periods,
+        lang,
+        period_cb=lambda period: f"my:res:period:{booking_id}:{period}",
+        back_cb=f"my:res:back:dates:{booking_id}",
+        cancel_cb=f"my:view:{booking_id}",
     )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def reschedule_time_grid_kb(booking_id: int, slots: list, lang: str = "ru") -> InlineKeyboardMarkup:
+    return time_grid_kb(
+        slots,
+        lang,
+        time_cb=lambda slot: f"my:res:time:{booking_id}:{slot_to_callback(slot)}",
+        back_cb=f"my:res:back:periods:{booking_id}",
+        cancel_cb=f"my:view:{booking_id}",
+    )
 
 
 def reschedule_confirm_kb(booking_id: int, lang: str = "ru") -> InlineKeyboardMarkup:
@@ -84,9 +86,15 @@ def reschedule_confirm_kb(booking_id: int, lang: str = "ru") -> InlineKeyboardMa
                 InlineKeyboardButton(
                     text=t(lang, "confirm_reschedule_btn"),
                     callback_data=f"my:res:confirm:{booking_id}",
-                ),
-                InlineKeyboardButton(text=t(lang, "cancel"), callback_data=f"my:view:{booking_id}"),
-            ]
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "booking_back_to_time"),
+                    callback_data=f"my:res:back:time:{booking_id}",
+                )
+            ],
+            [InlineKeyboardButton(text=t(lang, "cancel"), callback_data=f"my:view:{booking_id}")],
         ]
     )
 

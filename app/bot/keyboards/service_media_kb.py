@@ -50,8 +50,15 @@ def client_service_card_kb(
     *,
     has_photos: bool = False,
     has_video: bool = False,
+    service_type: str = "booking",
 ) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text=t(lang, "book_appointment"), callback_data=f"cb:book:{service_id}")]]
+    from app.models import SERVICE_TYPE_ORDER
+
+    if service_type == SERVICE_TYPE_ORDER:
+        action_btn = InlineKeyboardButton(text=t(lang, "order_button"), callback_data=f"cb:order:{service_id}")
+    else:
+        action_btn = InlineKeyboardButton(text=t(lang, "book_appointment"), callback_data=f"cb:book:{service_id}")
+    rows = [[action_btn]]
     if has_photos:
         rows.append([InlineKeyboardButton(text=t(lang, "view_photos"), callback_data=f"cb:photos:{service_id}")])
     if has_video:

@@ -42,6 +42,7 @@ def _service_card_kb(service: Service, lang: str, *, photos_count: int, videos_c
         lang,
         has_photos=photos_count > 0 and show_media,
         has_video=videos_count > 0 and show_media,
+        service_type=service.service_type,
     )
 
 
@@ -273,11 +274,14 @@ async def _send_plain_video(bot: Bot, chat_id: int, video: ServiceMedia, service
 async def build_admin_service_detail(session: AsyncSession, service: Service, lang: str):
     from app.bot.keyboards import admin_service_detail_kb
     from app.bot.utils.service_helpers import service_detail_source
+    from app.models import SERVICE_TYPE_ORDER
+    from app.services.service_modes_service import load_service_modes
 
     repo = ServiceMediaRepository(session)
     photos = await repo.count_photos(service.id)
     videos = await repo.count_videos(service.id)
     locations_count = await ServiceLocationRepository(session).count_for_service(service.id)
+    modes = await load_service_modes(session)
     text = format_service_admin(
         service,
         lang,
@@ -292,5 +296,7 @@ async def build_admin_service_detail(session: AsyncSession, service: Service, la
         archived=service.archived_at is not None,
         show_media_to_clients=service.show_media_to_clients,
         detail_source=service_detail_source(service),
+        show_type_change=modes.booking_enabled and modes.order_enabled,
+        is_order_type=service.service_type == SERVICE_TYPE_ORDER,
     )
     return text, kb

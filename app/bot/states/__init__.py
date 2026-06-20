@@ -29,12 +29,19 @@ class ClientBookingEditStates(StatesGroup):
 class AdminServiceStates(StatesGroup):
     name = State()
     description = State()
+    choosing_type = State()
     duration = State()
     duration_manual = State()
     buffer = State()
     buffer_manual = State()
     price = State()
     editing_field = State()
+
+
+class OrderStates(StatesGroup):
+    entering_details = State()
+    confirming = State()
+    editing_note = State()
 
 
 class AdminServiceMediaStates(StatesGroup):

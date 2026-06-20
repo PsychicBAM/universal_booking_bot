@@ -10,12 +10,23 @@ from app.utils.datetime_utils import slot_to_callback
 from app.utils.formatting import format_date, format_time
 
 
-def main_menu(is_admin: bool = False, lang: str = "ru") -> ReplyKeyboardMarkup:
-    rows = [
-        [KeyboardButton(text=t(lang, "book_appointment"))],
-        [KeyboardButton(text=t(lang, "my_bookings"))],
-        [KeyboardButton(text=t(lang, "contact_admin"))],
-    ]
+def main_menu(
+    is_admin: bool = False,
+    lang: str = "ru",
+    *,
+    booking_enabled: bool = True,
+    order_enabled: bool = False,
+) -> ReplyKeyboardMarkup:
+    rows: list[list[KeyboardButton]] = []
+    if booking_enabled:
+        rows.append([KeyboardButton(text=t(lang, "book_appointment"))])
+    if order_enabled:
+        rows.append([KeyboardButton(text=t(lang, "order_services_button"))])
+    if booking_enabled:
+        rows.append([KeyboardButton(text=t(lang, "my_bookings"))])
+    if order_enabled:
+        rows.append([KeyboardButton(text=t(lang, "my_orders_button"))])
+    rows.append([KeyboardButton(text=t(lang, "contact_admin"))])
     if is_language_switching_enabled():
         rows.append([KeyboardButton(text=t(lang, "language"))])
     if is_admin:
@@ -23,21 +34,69 @@ def main_menu(is_admin: bool = False, lang: str = "ru") -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
 
-def admin_menu(lang: str = "ru") -> ReplyKeyboardMarkup:
-    rows = [
-        [
-            KeyboardButton(text=t(lang, "admin_services")),
-            KeyboardButton(text=t(lang, "schedule_button")),
-        ],
-        [
-            KeyboardButton(text=t(lang, "admin_bookings")),
-            KeyboardButton(text=t(lang, "admin_clients_button")),
-        ],
-    ]
-    settings_row = [KeyboardButton(text=t(lang, "admin_settings"))]
-    if is_language_switching_enabled():
-        settings_row.append(KeyboardButton(text=t(lang, "language")))
-    rows.append(settings_row)
+def admin_menu(
+    lang: str = "ru",
+    *,
+    booking_enabled: bool = True,
+    order_enabled: bool = False,
+) -> ReplyKeyboardMarkup:
+    rows: list[list[KeyboardButton]] = []
+    if booking_enabled and order_enabled:
+        rows.append(
+            [
+                KeyboardButton(text=t(lang, "admin_services")),
+                KeyboardButton(text=t(lang, "schedule_button")),
+            ]
+        )
+        rows.append(
+            [
+                KeyboardButton(text=t(lang, "admin_bookings")),
+                KeyboardButton(text=t(lang, "orders_admin_button")),
+            ]
+        )
+        rows.append(
+            [
+                KeyboardButton(text=t(lang, "admin_clients_button")),
+                KeyboardButton(text=t(lang, "admin_settings")),
+            ]
+        )
+        if is_language_switching_enabled():
+            rows.append([KeyboardButton(text=t(lang, "language"))])
+    elif booking_enabled:
+        rows.append(
+            [
+                KeyboardButton(text=t(lang, "admin_services")),
+                KeyboardButton(text=t(lang, "schedule_button")),
+            ]
+        )
+        rows.append(
+            [
+                KeyboardButton(text=t(lang, "admin_bookings")),
+                KeyboardButton(text=t(lang, "admin_clients_button")),
+            ]
+        )
+        settings_row = [KeyboardButton(text=t(lang, "admin_settings"))]
+        if is_language_switching_enabled():
+            settings_row.append(KeyboardButton(text=t(lang, "language")))
+        rows.append(settings_row)
+    elif order_enabled:
+        rows.append(
+            [
+                KeyboardButton(text=t(lang, "admin_services")),
+                KeyboardButton(text=t(lang, "orders_admin_button")),
+            ]
+        )
+        rows.append(
+            [
+                KeyboardButton(text=t(lang, "admin_clients_button")),
+                KeyboardButton(text=t(lang, "admin_settings")),
+            ]
+        )
+        if is_language_switching_enabled():
+            rows.append([KeyboardButton(text=t(lang, "language"))])
+    else:
+        rows.append([KeyboardButton(text=t(lang, "admin_services"))])
+        rows.append([KeyboardButton(text=t(lang, "admin_settings"))])
     rows.append([KeyboardButton(text=t(lang, "back_main"))])
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
@@ -212,17 +271,28 @@ def admin_service_detail_kb(
     archived: bool = False,
     show_media_to_clients: bool = True,
     detail_source: str = "active",
+    show_type_change: bool = False,
+    is_order_type: bool = False,
 ) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text=t(lang, "edit_name"), callback_data=f"adm_svc_edit:name:{service_id}")],
         [InlineKeyboardButton(text=t(lang, "edit_description"), callback_data=f"adm_svc_edit:desc:{service_id}")],
-        [InlineKeyboardButton(text=t(lang, "edit_duration"), callback_data=f"adm_svc_edit:dur:{service_id}")],
-        [InlineKeyboardButton(text=t(lang, "edit_buffer"), callback_data=f"adm_svc_edit:buf:{service_id}")],
-        [InlineKeyboardButton(text=t(lang, "toggle_location_request"), callback_data=f"adm_svc_loc:{service_id}")],
-        [InlineKeyboardButton(text=t(lang, "client_comment_toggle"), callback_data=f"adm_svc_comment:{service_id}")],
-        admin_service_detail_location_row(service_id, lang),
-        [InlineKeyboardButton(text=t(lang, "edit_price"), callback_data=f"adm_svc_edit:price:{service_id}")],
     ]
+    if show_type_change:
+        rows.append(
+            [InlineKeyboardButton(text=t(lang, "service_type_change"), callback_data=f"svc:chtype:menu:{service_id}")]
+        )
+    if not is_order_type:
+        rows.extend(
+            [
+                [InlineKeyboardButton(text=t(lang, "edit_duration"), callback_data=f"adm_svc_edit:dur:{service_id}")],
+                [InlineKeyboardButton(text=t(lang, "edit_buffer"), callback_data=f"adm_svc_edit:buf:{service_id}")],
+                [InlineKeyboardButton(text=t(lang, "toggle_location_request"), callback_data=f"adm_svc_loc:{service_id}")],
+                [InlineKeyboardButton(text=t(lang, "client_comment_toggle"), callback_data=f"adm_svc_comment:{service_id}")],
+                admin_service_detail_location_row(service_id, lang),
+            ]
+        )
+    rows.append([InlineKeyboardButton(text=t(lang, "edit_price"), callback_data=f"adm_svc_edit:price:{service_id}")])
     rows.extend(admin_service_detail_media_rows(service_id, show_media_to_clients, lang))
     if not archived:
         if is_active:
@@ -263,7 +333,9 @@ def days_kb(lang: str = "ru", prefix: str = "wh_day") -> InlineKeyboardMarkup:
 
 
 BOOK_APPOINTMENT_TEXTS = all_texts("book_appointment")
+ORDER_SERVICES_TEXTS = all_texts("order_services_button")
 MY_BOOKINGS_TEXTS = all_texts("my_bookings")
+MY_ORDERS_TEXTS = all_texts("my_orders_button")
 CONTACT_ADMIN_TEXTS = all_texts("contact_admin")
 LANGUAGE_TEXTS = all_texts("language")
 ADMIN_MENU_TEXTS = all_texts("admin_menu")
@@ -286,6 +358,7 @@ ADMIN_UNAVAILABLE_LEGACY_TEXTS = frozenset(
 )
 ADMIN_UNAVAILABLE_TEXTS = all_texts("admin_unavailable") | ADMIN_UNAVAILABLE_LEGACY_TEXTS
 ADMIN_BOOKINGS_TEXTS = all_texts("admin_bookings")
+ADMIN_ORDERS_TEXTS = all_texts("orders_admin_button")
 ADMIN_CLIENTS_TEXTS = all_texts("admin_clients_button")
 ADMIN_SCHEDULE_TEXTS = all_texts("schedule_button")
 ADMIN_CALENDAR_TEXTS = all_texts("admin_calendar")
@@ -294,7 +367,9 @@ SKIP_TEXTS = all_texts("skip")
 
 _MENU_TEXT_KEYS = (
     "book_appointment",
+    "order_services_button",
     "my_bookings",
+    "my_orders_button",
     "contact_admin",
     "language",
     "admin_menu",
@@ -302,6 +377,7 @@ _MENU_TEXT_KEYS = (
     "admin_services",
     "schedule_button",
     "admin_bookings",
+    "orders_admin_button",
     "admin_clients_button",
     "admin_settings",
 )

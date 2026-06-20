@@ -97,6 +97,10 @@ async def _migrate_sqlite_columns() -> None:
             await conn.exec_driver_sql(
                 "ALTER TABLE services ADD COLUMN show_media_to_clients BOOLEAN NOT NULL DEFAULT 1"
             )
+        if "service_type" not in service_columns:
+            await conn.exec_driver_sql(
+                "ALTER TABLE services ADD COLUMN service_type VARCHAR(20) NOT NULL DEFAULT 'booking'"
+            )
 
         result = await conn.exec_driver_sql("PRAGMA table_info(bookings)")
         booking_columns = {row[1] for row in result.fetchall()}

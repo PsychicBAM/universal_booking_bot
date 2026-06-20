@@ -2,7 +2,7 @@ from datetime import date, datetime, time
 from html import escape
 
 from app.bot.i18n import format_buffer, format_duration, status_label, t
-from app.models import Booking, BookingStatus, Service
+from app.models import Booking, BookingStatus, Service, ServiceOrder
 
 
 def format_date(d: date) -> str:
@@ -80,8 +80,12 @@ def format_service_admin(
         t(lang, "label_enabled") if service.ask_client_comment else t(lang, "label_disabled")
     )
     media_status = t(lang, "media_enabled") if service.show_media_to_clients else t(lang, "media_disabled")
+    from app.utils.formatting import format_service_type_line
+
+    type_line = format_service_type_line(service, lang)
     return (
         f"📋 {service.name}\n"
+        f"{type_line}\n"
         f"{t(lang, 'duration_label', duration=format_duration(lang, service.duration_minutes))}\n"
         f"{t(lang, 'buffer_after_service', buffer=format_buffer(lang, service.buffer_after_minutes))}\n"
         f"{t(lang, 'service_requires_location', status=location_status)}\n"
@@ -255,3 +259,68 @@ def parse_date(text: str) -> date | None:
         except ValueError:
             continue
     return None
+
+
+def _order_status_label(lang: str, status: str) -> str:
+    from app.bot.i18n import t
+
+    key = f"order_status_{status}"
+    return t(lang, key) if key in ("order_status_new", "order_status_in_progress", "order_status_completed", "order_status_cancelled") else status
+    # fallback - t() will return key if missing
+
+
+def format_order_admin(
+    order: ServiceOrder,
+    service: Service | None,
+    lang: str,
+    *,
+    title_key: str = "order_detail_title",
+) -> str:
+    from app.bot.i18n import t
+
+    service_name = escape(service.name) if service else f"#{order.service_id}"
+    tg = f"@{order.client_username}" if order.client_username else t(lang, "not_provided")
+    phone = escape(order.client_phone) if order.client_phone else t(lang, "not_provided")
+    lines = [
+        t(lang, title_key),
+        "",
+        f"{t(lang, 'label_service')}: {service_name}",
+        f"{t(lang, 'label_name')}: {escape(order.client_name or t(lang, 'not_provided'))}",
+        t(lang, "admin_booking_telegram_line", username=tg),
+        f"{t(lang, 'label_phone')}: {phone}",
+    ]
+    if order.details:
+        lines.extend(["", t(lang, "order_details_label"), escape(order.details)])
+    lines.extend(
+        [
+            "",
+            f"{t(lang, 'order_created_at')}: {format_datetime(order.created_at)}",
+            f"{t(lang, 'booking_status_line', status=t(lang, f'order_status_{order.status}'))}",
+        ]
+    )
+    if order.admin_note:
+        lines.extend(["", t(lang, "order_admin_note_label"), escape(order.admin_note)])
+    return "\n".join(lines)
+
+
+def format_order_client(order: ServiceOrder, service: Service | None, lang: str) -> str:
+    from app.bot.i18n import t
+
+    service_name = escape(service.name) if service else f"#{order.service_id}"
+    lines = [
+        f"{t(lang, 'label_service')}: {service_name}",
+        f"{t(lang, 'order_created_at')}: {format_datetime(order.created_at)}",
+    ]
+    if order.details:
+        lines.append(f"{t(lang, 'order_details_label')}: {escape(order.details)}")
+    lines.append(t(lang, "booking_status_line", status=t(lang, f"order_status_{order.status}")))
+    return "\n".join(lines)
+
+
+def format_service_type_line(service: Service, lang: str) -> str:
+    from app.bot.i18n import t
+    from app.models import SERVICE_TYPE_ORDER
+
+    key = "service_type_order" if service.service_type == SERVICE_TYPE_ORDER else "service_type_booking"
+    return t(lang, key)
+

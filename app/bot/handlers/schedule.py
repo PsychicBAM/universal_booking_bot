@@ -11,6 +11,7 @@ from app.bot.utils.callbacks import safe_callback_answer
 from app.bot.utils.telegram_ui import edit_or_send, safe_edit_text
 from app.database.session import async_session_factory
 from app.repositories import WorkingBreakRepository
+from app.services.service_modes_service import load_service_modes
 from app.services.unavailable_service import list_upcoming_unavailable
 from app.services.working_break_service import breaks_by_weekday
 from app.services.working_hours_service import get_weekly_schedule
@@ -54,6 +55,11 @@ async def open_schedule_from_reply(
     lang: str,
 ) -> None:
     if not is_admin:
+        return
+    async with async_session_factory() as session:
+        modes = await load_service_modes(session)
+    if not modes.booking_enabled:
+        await message.answer(t(lang, "schedule_disabled_booking_off"))
         return
     if await state.get_state():
         await state.clear()

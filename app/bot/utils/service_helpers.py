@@ -1,8 +1,16 @@
-from app.models import Service
+from app.models import SERVICE_TYPE_ORDER, Service
 
 
 def is_service_bookable(service: Service | None) -> bool:
     return bool(service and service.is_active and service.archived_at is None)
+
+
+def is_order_service(service: Service | None) -> bool:
+    return bool(service and service.service_type == SERVICE_TYPE_ORDER)
+
+
+def is_booking_service(service: Service | None) -> bool:
+    return bool(service and service.service_type != SERVICE_TYPE_ORDER)
 
 
 def service_detail_source(service: Service) -> str:

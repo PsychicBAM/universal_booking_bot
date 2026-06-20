@@ -98,6 +98,13 @@ async def show_booking_detail(
 async def admin_bookings_message(message: Message, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
+    async with async_session_factory() as session:
+        from app.services.service_modes_service import load_service_modes
+
+        modes = await load_service_modes(session)
+    if not modes.booking_enabled:
+        await message.answer(t(lang, "bookings_disabled_booking_off"))
+        return
     await show_bookings_hub(message, lang)
 
 

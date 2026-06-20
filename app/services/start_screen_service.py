@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.i18n import t
 from app.bot.keyboards import main_menu
 from app.config import get_settings
+from app.database.session import async_session_factory
 from app.repositories import SettingsRepository
 
 logger = logging.getLogger(__name__)
@@ -201,7 +202,11 @@ async def _send_start_payload(
     contact_username: str | None,
 ) -> None:
     text = resolve_start_text(config, screen_lang, contact_username=contact_username)
-    keyboard = main_menu(is_admin, screen_lang)
+    from app.bot.utils.menu_helpers import menu_mode_kwargs
+
+    async with async_session_factory() as session:
+        kwargs = await menu_mode_kwargs(session)
+    keyboard = main_menu(is_admin, screen_lang, **kwargs)
     file_id, use_photo = resolve_photo_for_lang(config, screen_lang)
 
     if not use_photo or not file_id:

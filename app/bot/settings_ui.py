@@ -29,6 +29,7 @@ from app.bot.keyboards.start_screen_kb import start_screen_menu_kb
 from app.config import get_settings
 from app.database.session import async_session_factory
 from app.repositories import SettingsRepository
+from app.services.service_modes_service import load_service_modes
 from app.services.bot_settings_service import BotSettingsSnapshot, load_bot_settings_snapshot
 from app.services.language_service import enabled_languages_mode_label, parse_enabled_languages_value
 from app.services.confirmation_text_service import ConfirmationTextConfig, load_confirmation_text_config, resolve_confirmation_text
@@ -101,11 +102,23 @@ async def get_snapshot(telegram_id: int) -> BotSettingsSnapshot:
         return await load_bot_settings_snapshot(session, telegram_id)
 
 
+async def _main_settings_kb(telegram_id: int, lang: str, snapshot: BotSettingsSnapshot):
+    async with async_session_factory() as session:
+        modes = await load_service_modes(session)
+    return settings_main_kb(
+        snapshot,
+        lang,
+        booking_enabled=modes.booking_enabled,
+        order_enabled=modes.order_enabled,
+    )
+
+
 async def send_settings_main(message: Message, lang: str, telegram_id: int) -> None:
     snapshot = await get_snapshot(telegram_id)
+    kb = await _main_settings_kb(telegram_id, lang, snapshot)
     await message.answer(
         f"{t(lang, 'settings_menu_title')}\n\n{format_settings_main_text(snapshot, lang)}",
-        reply_markup=settings_main_kb(snapshot, lang),
+        reply_markup=kb,
     )
 
 
@@ -115,11 +128,28 @@ async def send_settings_main_after_cancel(message: Message, lang: str, telegram_
 
 async def edit_to_settings_main(callback: CallbackQuery, lang: str) -> None:
     snapshot = await get_snapshot(callback.from_user.id)
+    kb = await _main_settings_kb(callback.from_user.id, lang, snapshot)
     await safe_edit_text(
         callback.message,
         f"{t(lang, 'settings_menu_title')}\n\n{format_settings_main_text(snapshot, lang)}",
-        reply_markup=settings_main_kb(snapshot, lang),
+        reply_markup=kb,
     )
+
+
+async def edit_to_service_modes(callback: CallbackQuery, lang: str) -> None:
+    from app.bot.keyboards.service_modes_kb import service_modes_kb
+
+    async with async_session_factory() as session:
+        modes = await load_service_modes(session)
+    lines = [
+        t(lang, "service_modes_title"),
+        "",
+        t(lang, "service_modes_intro"),
+        "",
+        t(lang, "service_mode_booking_on" if modes.booking_enabled else "service_mode_booking_off"),
+        t(lang, "service_mode_order_on" if modes.order_enabled else "service_mode_order_off"),
+    ]
+    await safe_edit_text(callback.message, "\n".join(lines), reply_markup=service_modes_kb(modes, lang))
 
 
 async def edit_to_reminders(callback: CallbackQuery, lang: str) -> None:

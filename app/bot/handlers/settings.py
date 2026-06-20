@@ -24,16 +24,19 @@ from app.bot.settings_ui import (
     edit_to_enabled_languages,
     edit_to_language,
     edit_to_reminders,
+    edit_to_service_modes,
     edit_to_settings_main,
     edit_to_test_mode,
     send_settings_main,
 )
+from app.services.service_modes_service import load_service_modes, save_booking_mode, save_order_mode
 from app.services.bot_settings_service import load_bot_settings_snapshot
 from app.services.calendar_service import CalendarService
 from app.services.language_service import effective_lang, save_enabled_languages
 from app.bot.states import AdminSettingsStates
 from app.config import get_settings
 from app.database.session import async_session_factory
+from app.bot.utils.menu_helpers import menu_mode_kwargs
 from app.repositories import ClientRepository, SettingsRepository
 
 router = Router()
@@ -83,8 +86,39 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
     if data == "set:back:admin":
         await state.clear()
         await callback.message.delete()
-        await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+        async with async_session_factory() as session:
+            kwargs = await menu_mode_kwargs(session)
+        await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang, **kwargs))
         await safe_callback_answer(callback)
+        return
+
+    if data == "set:modes:open":
+        await safe_callback_answer(callback)
+        await edit_to_service_modes(callback, lang)
+        return
+
+    if data == "set:modes:booking:toggle":
+        async with async_session_factory() as session:
+            modes = await load_service_modes(session)
+            err = await save_booking_mode(session, not modes.booking_enabled)
+            await session.commit()
+        if err:
+            await safe_callback_answer(callback, t(lang, "service_mode_cannot_disable_all"), show_alert=True)
+            return
+        await safe_callback_answer(callback)
+        await edit_to_service_modes(callback, lang)
+        return
+
+    if data == "set:modes:order:toggle":
+        async with async_session_factory() as session:
+            modes = await load_service_modes(session)
+            err = await save_order_mode(session, not modes.order_enabled)
+            await session.commit()
+        if err:
+            await safe_callback_answer(callback, t(lang, "service_mode_cannot_disable_all"), show_alert=True)
+            return
+        await safe_callback_answer(callback)
+        await edit_to_service_modes(callback, lang)
         return
 
     if data == "set:back:main":

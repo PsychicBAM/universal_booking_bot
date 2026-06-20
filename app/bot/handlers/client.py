@@ -12,7 +12,11 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.i18n import t
 from app.bot.utils.callbacks import safe_callback_answer
-from app.bot.utils.service_helpers import client_service_unavailable_key, is_service_bookable
+from app.bot.utils.service_helpers import (
+    client_service_unavailable_key,
+    is_booking_service,
+    is_service_bookable,
+)
 from app.bot.utils.telegram_ui import edit_or_send
 from app.bot.keyboards import (
     BOOK_APPOINTMENT_TEXTS,
@@ -50,7 +54,7 @@ from app.bot.booking_client_data import (
     show_phone_collection,
 )
 from app.bot.keyboards.booking_confirm_kb import booking_confirm_kb, booking_edit_menu_kb
-from app.config import get_settings
+from app.models import SERVICE_TYPE_BOOKING
 from app.database.session import async_session_factory
 from app.repositories import (
     BookingRepository,
@@ -490,11 +494,13 @@ async def _notify_admins_new_booking(bot, booking, service, lang: str) -> None:
 @router.message(F.text.in_(BOOK_APPOINTMENT_TEXTS))
 async def start_booking(message: Message, state: FSMContext, lang: str) -> None:
     async with async_session_factory() as session:
-        services = await ServiceRepository(session).list_client_services()
+        services = await ServiceRepository(session).list_client_services(
+            service_type=SERVICE_TYPE_BOOKING
+        )
     if not services:
         await message.answer(t(lang, "no_services"))
         return
-    await state.update_data(flow_origin="client")
+    await state.update_data(flow_origin="client", flow_kind="booking")
     await state.set_state(BookingStates.choosing_service)
     await message.answer(t(lang, "choose_service"), reply_markup=services_kb(services, lang))
 
@@ -516,7 +522,7 @@ async def view_service(callback: CallbackQuery, state: FSMContext, lang: str, bo
         videos = await ServiceMediaRepository(session).count_videos(service_id)
     t_db = time.perf_counter() - t0
 
-    await state.update_data(flow_origin="client")
+    await state.update_data(flow_origin="client", flow_kind="booking")
     await state.set_state(BookingStates.choosing_service)
     chat_id = callback.message.chat.id
     try:
@@ -561,13 +567,16 @@ async def view_service(callback: CallbackQuery, state: FSMContext, lang: str, bo
 @router.callback_query(BookingStates.choosing_service, F.data == "cb:svc_back")
 async def back_to_services(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
     async with async_session_factory() as session:
-        services = await ServiceRepository(session).list_client_services()
+        services = await ServiceRepository(session).list_client_services(
+            service_type=SERVICE_TYPE_BOOKING
+        )
     if not services:
         await edit_or_send(callback, t(lang, "no_services"))
         await state.clear()
         await safe_callback_answer(callback)
         return
     await state.set_state(BookingStates.choosing_service)
+    await state.update_data(flow_kind="booking")
     await state.update_data(
         service_location_id=None,
         service_location_title=None,
@@ -690,7 +699,7 @@ async def choose_service(callback: CallbackQuery, state: FSMContext, lang: str) 
 
     async with async_session_factory() as session:
         service = await ServiceRepository(session).get_by_id(service_id)
-        if not is_service_bookable(service):
+        if not is_service_bookable(service) or not is_booking_service(service):
             await callback.message.answer(t(lang, client_service_unavailable_key(service)))
             return
         locations = await ServiceLocationRepository(session).list_active_for_service(service_id)

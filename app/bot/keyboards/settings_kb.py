@@ -8,7 +8,13 @@ def _toggle_label(lang: str, enabled: bool, on_key: str, off_key: str) -> str:
     return t(lang, on_key if enabled else off_key)
 
 
-def settings_main_kb(snapshot: BotSettingsSnapshot, lang: str) -> InlineKeyboardMarkup:
+def settings_main_kb(
+    snapshot: BotSettingsSnapshot,
+    lang: str,
+    *,
+    booking_enabled: bool = True,
+    order_enabled: bool = False,
+) -> InlineKeyboardMarkup:
     ac_btn = _toggle_label(
         lang,
         snapshot.auto_confirm,
@@ -16,17 +22,24 @@ def settings_main_kb(snapshot: BotSettingsSnapshot, lang: str) -> InlineKeyboard
         "settings_auto_confirm_btn_off",
     )
     rows = [
-        [InlineKeyboardButton(text=ac_btn, callback_data="set:ac:toggle")],
-        [InlineKeyboardButton(text=t(lang, "settings_reminders_btn"), callback_data="set:rm:open")],
-        [InlineKeyboardButton(text=t(lang, "settings_enabled_languages_btn"), callback_data="set:enabled:open")],
+        [InlineKeyboardButton(text=t(lang, "service_modes_settings_button"), callback_data="set:modes:open")],
     ]
+    if booking_enabled:
+        rows.append([InlineKeyboardButton(text=ac_btn, callback_data="set:ac:toggle")])
+        rows.append([InlineKeyboardButton(text=t(lang, "settings_reminders_btn"), callback_data="set:rm:open")])
+    rows.append([InlineKeyboardButton(text=t(lang, "settings_enabled_languages_btn"), callback_data="set:enabled:open")])
     if len(snapshot.enabled_languages) > 1:
         rows.append([InlineKeyboardButton(text=t(lang, "settings_language_btn"), callback_data="set:lang:open")])
     rows.extend(
         [
             [InlineKeyboardButton(text=t(lang, "settings_contact_btn"), callback_data="set:contact:open")],
             [InlineKeyboardButton(text=t(lang, "client_data_settings_button"), callback_data="set:cda:open")],
-            [InlineKeyboardButton(text=t(lang, "confirm_settings_button"), callback_data="conf:open")],
+        ]
+    )
+    if booking_enabled:
+        rows.append([InlineKeyboardButton(text=t(lang, "confirm_settings_button"), callback_data="conf:open")])
+    rows.extend(
+        [
             [InlineKeyboardButton(text=t(lang, "start_screen_btn"), callback_data="set:start:open")],
             [InlineKeyboardButton(text=t(lang, "settings_calendar_btn"), callback_data="set:cal:open")],
             [InlineKeyboardButton(text=t(lang, "settings_advanced_btn"), callback_data="set:adv:open")],

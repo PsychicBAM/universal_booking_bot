@@ -19,6 +19,7 @@ from app.bot.handlers import confirmation_settings
 from app.bot.handlers import start_screen_settings
 from app.bot.handlers import schedule
 from app.bot.handlers import unavailable
+from app.bot.handlers import admin_orders, orders
 from app.bot.handlers import working_breaks, working_hours
 from app.bot.middlewares import AdminMiddleware, LanguageMiddleware
 from app.bot.middlewares.clear_menu_fsm import ClearMenuFsmMiddleware
@@ -137,6 +138,8 @@ async def main() -> None:
     dp.include_router(admin_clients.router)
     dp.include_router(schedule.router)
     dp.include_router(start.router)
+    dp.include_router(admin_orders.router)
+    dp.include_router(orders.router)
     dp.include_router(working_breaks.router)
     dp.include_router(working_hours.router)
     dp.include_router(unavailable.router)

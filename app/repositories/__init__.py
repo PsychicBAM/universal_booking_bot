@@ -13,6 +13,10 @@ from app.models import (
     Service,
     ServiceLocation,
     ServiceMedia,
+    ServiceOrder,
+    ServiceOrderStatus,
+    SERVICE_TYPE_BOOKING,
+    SERVICE_TYPE_ORDER,
     SupportMessage,
     SupportMessageStatus,
     UnavailableDate,
@@ -129,14 +133,17 @@ class ServiceRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_client_services(self) -> list[Service]:
-        """Active, non-archived services visible to clients for booking."""
-        result = await self.session.execute(
+    async def list_client_services(self, *, service_type: str | None = None) -> list[Service]:
+        """Active, non-archived services visible to clients."""
+        stmt = (
             select(Service)
             .where(Service.is_active.is_(True))
             .where(Service.archived_at.is_(None))
             .order_by(Service.name)
         )
+        if service_type:
+            stmt = stmt.where(Service.service_type == service_type)
+        result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
     async def list_active_services(self) -> list[Service]:
@@ -194,6 +201,8 @@ class ServiceRepository:
         duration_minutes: int,
         price: int,
         buffer_after_minutes: int = 0,
+        *,
+        service_type: str = SERVICE_TYPE_BOOKING,
     ) -> Service:
         service = Service(
             name=name,
@@ -201,6 +210,7 @@ class ServiceRepository:
             duration_minutes=duration_minutes,
             buffer_after_minutes=buffer_after_minutes,
             price=price,
+            service_type=service_type,
         )
         self.session.add(service)
         await self.session.flush()
@@ -251,6 +261,92 @@ class ServiceRepository:
             return "archived"
         await self.delete(service)
         return "deleted"
+
+
+class ServiceOrderRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get_by_id(self, order_id: int) -> ServiceOrder | None:
+        result = await self.session.execute(
+            select(ServiceOrder).where(ServiceOrder.id == order_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_by_status(
+        self,
+        status: str | None = None,
+        *,
+        page: int = 0,
+        limit: int = 10,
+    ) -> tuple[list[ServiceOrder], int]:
+        stmt = select(ServiceOrder).order_by(ServiceOrder.created_at.desc())
+        if status:
+            stmt = stmt.where(ServiceOrder.status == status)
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total = int((await self.session.execute(count_stmt)).scalar_one())
+        stmt = stmt.offset(page * limit).limit(limit)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all()), total
+
+    async def count_by_status(self) -> dict[str, int]:
+        result = await self.session.execute(
+            select(ServiceOrder.status, func.count())
+            .group_by(ServiceOrder.status)
+        )
+        counts = {row[0]: int(row[1]) for row in result.all()}
+        for status in ServiceOrderStatus:
+            counts.setdefault(status.value, 0)
+        return counts
+
+    async def list_for_client(self, client_id: int) -> list[ServiceOrder]:
+        result = await self.session.execute(
+            select(ServiceOrder)
+            .where(ServiceOrder.client_id == client_id)
+            .order_by(ServiceOrder.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def create(
+        self,
+        *,
+        service_id: int,
+        client_id: int,
+        client_name: str | None,
+        client_phone: str | None,
+        client_username: str | None,
+        details: str | None,
+    ) -> ServiceOrder:
+        order = ServiceOrder(
+            service_id=service_id,
+            client_id=client_id,
+            client_name=client_name,
+            client_phone=client_phone,
+            client_username=client_username,
+            details=details,
+            status=ServiceOrderStatus.NEW.value,
+        )
+        self.session.add(order)
+        await self.session.flush()
+        return order
+
+    async def update_status(self, order_id: int, status: str) -> ServiceOrder | None:
+        order = await self.get_by_id(order_id)
+        if not order:
+            return None
+        order.status = status
+        if status in (ServiceOrderStatus.COMPLETED.value, ServiceOrderStatus.CANCELLED.value):
+            order.closed_at = datetime.now(timezone.utc)
+        await self.session.flush()
+        return order
+
+    async def set_admin_note(self, order_id: int, note: str | None) -> ServiceOrder | None:
+        order = await self.get_by_id(order_id)
+        if not order:
+            return None
+        order.admin_note = note
+        await self.session.flush()
+        return order
 
 
 class WorkingHoursRepository:

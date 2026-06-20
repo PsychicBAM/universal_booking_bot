@@ -14,33 +14,82 @@ if str(ROOT) not in sys.path:
 
 def _check_symbol_imports(app_dir: Path) -> None:
     rules = [
-        ("log_action_timing(", "log_action_timing", "app.utils.perf_logging"),
-        ("schedule_background_task(", "schedule_background_task", "app.utils.background_tasks"),
-        ("safe_callback_answer(", "safe_callback_answer", "app.bot.utils.callbacks"),
+        (
+            "async_session_factory(",
+            "async_session_factory",
+            "app.database.session",
+            {"session.py"},
+        ),
+        (
+            "log_action_timing(",
+            "log_action_timing",
+            "app.utils.perf_logging",
+            {"perf_logging.py"},
+        ),
+        (
+            "schedule_background_task(",
+            "schedule_background_task",
+            "app.utils.background_tasks",
+            {"background_tasks.py"},
+        ),
+        (
+            "safe_callback_answer(",
+            "safe_callback_answer",
+            "app.bot.utils.callbacks",
+            {"callbacks.py"},
+        ),
         (
             "send_attendance_question_to_client(",
             "send_attendance_question_to_client",
             "app.services.admin_attendance_service",
+            {"admin_attendance_service.py"},
         ),
         (
             "notify_admins_client_cancelled(",
             "notify_admins_client_cancelled",
             "app.services.booking_notification_service",
+            {"booking_notification_service.py"},
         ),
-        ("edit_or_send(", "edit_or_send", "app.bot.utils.telegram_ui"),
-        ("safe_edit_text(", "safe_edit_text", "app.bot.utils.telegram_ui"),
+        (
+            "edit_or_send(",
+            "edit_or_send",
+            "app.bot.utils.telegram_ui",
+            {"telegram_ui.py"},
+        ),
+        (
+            "safe_edit_text(",
+            "safe_edit_text",
+            "app.bot.utils.telegram_ui",
+            {"telegram_ui.py"},
+        ),
+        (
+            "build_booking_confirmation_message(",
+            "build_booking_confirmation_message",
+            "app.services.confirmation_text_service",
+            {"confirmation_text_service.py"},
+        ),
+        (
+            "build_booking_confirmation_keyboard(",
+            "build_booking_confirmation_keyboard",
+            "app.services.confirmation_text_service",
+            {"confirmation_text_service.py"},
+        ),
+        (
+            "format_admin_booking_button(",
+            "format_admin_booking_button",
+            "app.bot.utils.booking_labels",
+            {"booking_labels.py"},
+        ),
+        (
+            "format_client_booking_button(",
+            "format_client_booking_button",
+            "app.bot.utils.booking_labels",
+            {"booking_labels.py"},
+        ),
     ]
-    skip_def_files = {
-        "perf_logging.py",
-        "background_tasks.py",
-        "callbacks.py",
-        "admin_attendance_service.py",
-        "booking_notification_service.py",
-        "telegram_ui.py",
-    }
     for path in app_dir.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
-        for call, symbol, module_path in rules:
+        for call, symbol, module_path, skip_def_files in rules:
             if call not in text:
                 continue
             if path.name in skip_def_files:
@@ -80,6 +129,10 @@ def _check_callback_prefix_handlers() -> None:
         "sup:",
         "wh:",
         "br:",
+        "ord:",
+        "cb:order:",
+        "svc:type:",
+        "set:modes:",
         "unav:",
         "sch:",
         "conf:",
@@ -1102,6 +1155,49 @@ def main() -> int:
         print(f"FAIL: working breaks — {exc}")
         return 1
 
+    try:
+        from app.models import SERVICE_TYPE_BOOKING, SERVICE_TYPE_ORDER
+        from app.services.service_modes_service import (
+            ServiceModes,
+            default_service_type_for_modes,
+            save_booking_mode,
+            save_order_mode,
+        )
+
+        assert default_service_type_for_modes(ServiceModes(True, False)) == SERVICE_TYPE_BOOKING
+        assert default_service_type_for_modes(ServiceModes(False, True)) == SERVICE_TYPE_ORDER
+
+        from app.bot.keyboards import admin_menu, main_menu
+        from app.bot.i18n import t
+
+        booking_only_admin = {btn.text for row in admin_menu("ru", booking_enabled=True, order_enabled=False).keyboard for btn in row}
+        if t("ru", "orders_admin_button") in booking_only_admin:
+            raise AssertionError("test A — orders button hidden when order mode off")
+        both_admin = {btn.text for row in admin_menu("ru", booking_enabled=True, order_enabled=True).keyboard for btn in row}
+        if t("ru", "orders_admin_button") not in both_admin:
+            raise AssertionError("test B — orders button shown when order mode on")
+        order_only_admin = {btn.text for row in admin_menu("ru", booking_enabled=False, order_enabled=True).keyboard for btn in row}
+        if t("ru", "schedule_button") in order_only_admin or t("ru", "admin_bookings") in order_only_admin:
+            raise AssertionError("test H — schedule/bookings hidden in order-only mode")
+
+        client_both = {btn.text for row in main_menu("ru", booking_enabled=True, order_enabled=True).keyboard for btn in row}
+        if t("ru", "my_orders_button") not in client_both or t("ru", "my_bookings") not in client_both:
+            raise AssertionError("test G — client menu shows both my bookings and my orders")
+
+        from app.bot.keyboards.service_media_kb import client_service_card_kb
+
+        order_cb = client_service_card_kb(1, "ru", service_type=SERVICE_TYPE_ORDER).inline_keyboard[0][0].callback_data
+        if order_cb != "cb:order:1":
+            raise AssertionError("test D — order service card uses cb:order")
+        book_cb = client_service_card_kb(1, "ru", service_type=SERVICE_TYPE_BOOKING).inline_keyboard[0][0].callback_data
+        if book_cb != "cb:book:1":
+            raise AssertionError("test C — booking service card uses cb:book")
+
+        print("OK: service types and order modes")
+    except Exception as exc:
+        print(f"FAIL: service types — {exc}")
+        return 1
+
     settings = get_settings()
     sample = normalize_slot.__name__
     print(f"TIMEZONE={settings.timezone}")
@@ -1119,6 +1215,20 @@ def main() -> int:
         print("OK: callback prefix handler audit")
     except Exception as exc:
         print(f"FAIL: callback prefix audit — {exc}")
+        return 1
+
+    try:
+        from app.services.reminder_service import ReminderService
+        from app.services.start_screen_service import deliver_start_screen
+
+        start_src = (ROOT / "app" / "services" / "start_screen_service.py").read_text(encoding="utf-8")
+        if "async_session_factory(" in start_src and "from app.database.session import async_session_factory" not in start_src:
+            raise AssertionError("start_screen_service.py uses async_session_factory without import")
+        if deliver_start_screen is None or ReminderService is None:
+            raise AssertionError("critical service symbols missing")
+        print("OK: critical service imports smoke")
+    except Exception as exc:
+        print(f"FAIL: critical service imports smoke — {exc}")
         return 1
 
     try:

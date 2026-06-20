@@ -18,6 +18,7 @@ from app.bot.states import (
     AdminSupportStates,
     AdminUnavailableStates,
     AdminWorkingHoursStates,
+    OrderStates,
     WorkingBreakStates,
     AttendanceStates,
     ClientBookingEditStates,
@@ -31,6 +32,7 @@ ADMIN_STATE_PREFIXES = (
     "AdminServiceMediaStates",
     "AdminServiceLocationStates",
     "AdminWorkingHoursStates",
+    "OrderStates",
     "WorkingBreakStates",
     "AdminUnavailableStates",
     "AdminMessageStates",
@@ -82,6 +84,17 @@ async def global_cancel(message: Message, state: FSMContext, is_admin: bool, lan
         from app.bot.handlers.working_hours import send_working_hours_main
 
         await send_working_hours_main(message, lang)
+        return
+
+    if current and current.startswith("OrderStates"):
+        await state.clear()
+        await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
+        from app.bot.utils.menu_helpers import menu_mode_kwargs
+        from app.database.session import async_session_factory
+
+        async with async_session_factory() as session:
+            kwargs = await menu_mode_kwargs(session)
+        await message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang, **kwargs))
         return
 
     if current and current.startswith("WorkingBreakStates"):

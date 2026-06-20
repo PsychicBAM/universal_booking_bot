@@ -7,6 +7,7 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.utils.callbacks import safe_callback_answer
 from app.bot.handlers.admin_bookings import show_bookings_hub
+from app.bot.utils.menu_helpers import menu_mode_kwargs
 from app.bot.utils.telegram_ui import edit_or_send, safe_edit_text
 
 from app.bot.i18n import format_buffer, format_duration, t
@@ -24,13 +25,14 @@ from app.bot.keyboards import (
 )
 from app.bot.keyboards.service_buffer_kb import service_buffer_kb
 from app.bot.keyboards.service_duration_kb import service_duration_kb
+from app.bot.keyboards.service_type_kb import service_type_change_kb, service_type_choose_kb
 from app.bot.states import (
     AdminMessageStates,
     AdminServiceStates,
 )
 from app.config import get_settings
 from app.database.session import async_session_factory
-from app.models import BookingStatus, Client
+from app.models import BookingStatus, Client, SERVICE_TYPE_BOOKING, SERVICE_TYPE_ORDER
 from app.repositories import (
     BookingRepository,
     ServiceRepository,
@@ -39,6 +41,7 @@ from app.repositories import (
 from app.services.booking_service import BookingService
 from app.services.language_service import get_user_language
 from app.services.service_media_service import build_admin_service_detail
+from app.services.service_modes_service import default_service_type_for_modes, load_service_modes
 from app.utils.formatting import format_booking, parse_time
 from app.utils.perf_logging import log_action_timing
 
@@ -346,12 +349,43 @@ async def admin_service_name(message: Message, state: FSMContext, lang: str) -> 
     await message.answer(t(lang, "enter_description"))
 
 
+async def _proceed_after_service_type(message: Message, state: FSMContext, lang: str, service_type: str) -> None:
+    await state.update_data(service_type=service_type)
+    if service_type == SERVICE_TYPE_ORDER:
+        await state.set_state(AdminServiceStates.price)
+        await message.answer(t(lang, "enter_price"), reply_markup=cancel_kb(lang))
+        return
+    await state.set_state(AdminServiceStates.duration)
+    await message.answer(_duration_prompt(lang), reply_markup=service_duration_kb(lang))
+
+
 @router.message(AdminServiceStates.description, F.text)
 async def admin_service_description(message: Message, state: FSMContext, lang: str) -> None:
     desc = None if message.text.strip() == "-" else message.text.strip()
     await state.update_data(description=desc)
-    await state.set_state(AdminServiceStates.duration)
-    await message.answer(_duration_prompt(lang), reply_markup=service_duration_kb(lang))
+    async with async_session_factory() as session:
+        modes = await load_service_modes(session)
+    if modes.booking_enabled and modes.order_enabled:
+        await state.set_state(AdminServiceStates.choosing_type)
+        await message.answer(
+            f"{t(lang, 'service_type_choose_title')}\n\n{t(lang, 'service_type_choose_intro')}",
+            reply_markup=service_type_choose_kb(lang),
+        )
+        return
+    svc_type = default_service_type_for_modes(modes)
+    await _proceed_after_service_type(message, state, lang, svc_type)
+
+
+@router.callback_query(AdminServiceStates.choosing_type, F.data.startswith("svc:type:"))
+async def admin_service_type_pick(callback: CallbackQuery, state: FSMContext, is_admin: bool, lang: str) -> None:
+    if not is_admin:
+        return
+    service_type = callback.data.removeprefix("svc:type:")
+    if service_type not in (SERVICE_TYPE_BOOKING, SERVICE_TYPE_ORDER):
+        await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+        return
+    await safe_callback_answer(callback)
+    await _proceed_after_service_type(callback.message, state, lang, service_type)
 
 
 @router.callback_query(AdminServiceStates.duration, F.data.startswith("svc:dur:"))
@@ -410,17 +444,22 @@ async def admin_service_price(message: Message, state: FSMContext, lang: str) ->
         await message.answer(t(lang, "enter_number"))
         return
     data = await state.get_data()
+    service_type = data.get("service_type", SERVICE_TYPE_BOOKING)
+    duration = data.get("duration", 60) if service_type == SERVICE_TYPE_BOOKING else 60
+    buffer_m = data.get("buffer_after_minutes", 0) if service_type == SERVICE_TYPE_BOOKING else 0
     async with async_session_factory() as session:
         service = await ServiceRepository(session).create(
             name=data["name"],
             description=data.get("description"),
-            duration_minutes=data["duration"],
-            buffer_after_minutes=data.get("buffer_after_minutes", 0),
+            duration_minutes=duration,
+            buffer_after_minutes=buffer_m,
             price=int(message.text),
+            service_type=service_type,
         )
         await session.commit()
+        kwargs = await menu_mode_kwargs(session)
     await state.clear()
-    await message.answer(t(lang, "service_created", name=service.name), reply_markup=admin_menu(lang))
+    await message.answer(t(lang, "service_created", name=service.name), reply_markup=admin_menu(lang, **kwargs))
 
 
 @router.callback_query(F.data.regexp(r"^adm_svc:\d+$"))
@@ -430,6 +469,45 @@ async def admin_service_detail(callback: CallbackQuery, is_admin: bool, lang: st
     service_id = int(callback.data.split(":")[-1])
     if await _show_service_detail(callback, service_id, lang):
         await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.regexp(r"^svc:chtype:menu:\d+$"))
+async def admin_service_type_change_menu(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    if not is_admin:
+        return
+    service_id = int(callback.data.rsplit(":", 1)[1])
+    async with async_session_factory() as session:
+        modes = await load_service_modes(session)
+        service = await ServiceRepository(session).get_by_id(service_id)
+    if not service or not (modes.booking_enabled and modes.order_enabled):
+        await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+        return
+    await safe_edit_text(
+        callback.message,
+        f"{t(lang, 'service_type_choose_title')}\n\n{t(lang, 'service_type_change_warning')}",
+        reply_markup=service_type_change_kb(service_id, lang),
+    )
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.regexp(r"^svc:chtype:(booking|order):\d+$"))
+async def admin_service_type_change_apply(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    if not is_admin:
+        return
+    parts = callback.data.split(":")
+    new_type = parts[2]
+    service_id = int(parts[3])
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+        if not service:
+            await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+            return
+        if service.service_type != new_type:
+            service.service_type = new_type
+            await session.commit()
+        text, kb = await build_admin_service_detail(session, service, lang)
+    await safe_callback_answer(callback, t(lang, "service_type_changed"))
+    await safe_edit_text(callback.message, text, reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("adm_svc_loc:"))

@@ -20,6 +20,17 @@ class SupportMessageStatus(str, enum.Enum):
     CLOSED = "closed"
 
 
+class ServiceOrderStatus(str, enum.Enum):
+    NEW = "new"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+SERVICE_TYPE_BOOKING = "booking"
+SERVICE_TYPE_ORDER = "order"
+
+
 class Admin(Base):
     __tablename__ = "admins"
 
@@ -48,6 +59,7 @@ class Client(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     bookings: Mapped[list["Booking"]] = relationship(back_populates="client")
+    orders: Mapped[list["ServiceOrder"]] = relationship(back_populates="client")
 
 
 class Service(Base):
@@ -62,6 +74,7 @@ class Service(Base):
     ask_client_comment: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     show_media_to_clients: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     price: Mapped[int] = mapped_column(Integer, default=0)
+    service_type: Mapped[str] = mapped_column(String(20), default="booking", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -70,6 +83,7 @@ class Service(Base):
     )
 
     bookings: Mapped[list["Booking"]] = relationship(back_populates="service")
+    orders: Mapped[list["ServiceOrder"]] = relationship(back_populates="service")
     media: Mapped[list["ServiceMedia"]] = relationship(back_populates="service", cascade="all, delete-orphan")
     locations: Mapped[list["ServiceLocation"]] = relationship(
         back_populates="service", cascade="all, delete-orphan"
@@ -196,6 +210,28 @@ class Booking(Base):
     client: Mapped["Client"] = relationship(back_populates="bookings")
     service: Mapped["Service"] = relationship(back_populates="bookings")
     service_location: Mapped["ServiceLocation | None"] = relationship(back_populates="bookings")
+
+
+class ServiceOrder(Base):
+    __tablename__ = "service_orders"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), nullable=False, index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False, index=True)
+    client_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    client_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    client_username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default=ServiceOrderStatus.NEW.value, nullable=False)
+    admin_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    service: Mapped["Service"] = relationship(back_populates="orders")
+    client: Mapped["Client"] = relationship(back_populates="orders")
 
 
 class CalendarSettings(Base):

@@ -229,6 +229,12 @@ async def continue_after_phone(
     *,
     phone_ack: bool = False,
 ) -> None:
+    data = await state.get_data()
+    if data.get("flow_kind") == "order":
+        from app.bot.order_client_data import continue_order_after_phone
+
+        await continue_order_after_phone(message, state, lang, phone_ack=phone_ack)
+        return
     from app.bot.handlers.client import _show_confirmation
 
     data = await state.get_data()

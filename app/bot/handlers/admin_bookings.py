@@ -1,15 +1,17 @@
 import logging
 
 from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.i18n import t
-from app.bot.keyboards import ADMIN_BOOKINGS_TEXTS, admin_menu
+from app.bot.keyboards import ADMIN_BOOKINGS_TEXTS, admin_menu, cancel_kb
 from app.bot.keyboards.admin_bookings_kb import (
     admin_booking_detail_kb,
     admin_bookings_folder_kb,
     admin_bookings_hub_kb,
 )
+from app.bot.states import AdminBookingSearchStates
 from app.bot.utils.callbacks import safe_callback_answer
 from app.bot.utils.telegram_ui import edit_or_send, safe_edit_text
 from app.database.session import async_session_factory
@@ -20,14 +22,27 @@ from app.services.admin_bookings_service import (
     build_bookings_hub_body,
     load_bookings_folder,
     load_bookings_hub,
+    paginate_bookings_folder,
     parse_bookings_list_callback,
     parse_bookings_view_callback,
+    search_bookings,
 )
 from app.services.attendance_service import is_booking_attendance_eligible
 from app.utils.formatting import format_booking
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+
+async def _load_service_names(session, bookings) -> dict[int, str]:
+    service_ids = {booking.service_id for booking in bookings if booking.service_id}
+    names: dict[int, str] = {}
+    repo = ServiceRepository(session)
+    for service_id in service_ids:
+        service = await repo.get_by_id(service_id)
+        if service and service.name and service.name.strip():
+            names[service_id] = service.name.strip()
+    return names
 
 
 async def show_bookings_hub(
@@ -55,9 +70,17 @@ async def show_bookings_folder(
     page: int,
 ) -> None:
     async with async_session_factory() as session:
-        page_items, _filtered, page, total_pages = await load_bookings_folder(session, section, page)
+        page_items, filtered, page, total_pages = await load_bookings_folder(session, section, page)
+        service_names = await _load_service_names(session, filtered)
     text = build_bookings_folder_body(section, page_items, lang)
-    keyboard = admin_bookings_folder_kb(page_items, section, page, total_pages, lang)
+    keyboard = admin_bookings_folder_kb(
+        page_items,
+        section,
+        page,
+        total_pages,
+        lang,
+        service_names=service_names,
+    )
     if isinstance(event, CallbackQuery):
         await edit_or_send(event, text, reply_markup=keyboard)
     else:
@@ -134,6 +157,57 @@ async def admin_bookings_folder_callback(callback: CallbackQuery, is_admin: bool
     await show_bookings_folder(callback, lang, section, page)
 
 
+@router.callback_query(F.data == "adm_book:search")
+async def admin_bookings_search_start(
+    callback: CallbackQuery,
+    state: FSMContext,
+    is_admin: bool,
+    lang: str,
+) -> None:
+    if not is_admin:
+        return
+    await state.set_state(AdminBookingSearchStates.entering_query)
+    await callback.message.answer(t(lang, "bookings_search_prompt"), reply_markup=cancel_kb(lang))
+    await safe_callback_answer(callback)
+
+
+@router.message(AdminBookingSearchStates.entering_query, F.text)
+async def admin_bookings_search_query(
+    message: Message,
+    state: FSMContext,
+    is_admin: bool,
+    lang: str,
+) -> None:
+    if not is_admin:
+        return
+    query = (message.text or "").strip()
+    async with async_session_factory() as session:
+        bookings = await BookingRepository(session).list_all_bookings()
+        service_names = await _load_service_names(session, bookings)
+        results = search_bookings(bookings, query, service_names)
+    await state.clear()
+    if not results:
+        await message.answer(t(lang, "bookings_search_no_results"), reply_markup=admin_bookings_hub_kb(lang))
+        return
+    page_items, page, total_pages = paginate_bookings_folder(results, 0)
+    text = "\n".join(
+        [
+            t(lang, "bookings_search_button"),
+            "",
+            t(lang, "bookings_choose_action"),
+        ]
+    )
+    keyboard = admin_bookings_folder_kb(
+        page_items,
+        "search",
+        page,
+        total_pages,
+        lang,
+        service_names=service_names,
+    )
+    await message.answer(text, reply_markup=keyboard)
+
+
 @router.callback_query(F.data.regexp(r"^adm_book:view:"))
 async def admin_bookings_view_callback(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
@@ -148,5 +222,5 @@ async def admin_booking_legacy_view(callback: CallbackQuery, is_admin: bool, lan
     if not is_admin:
         return
     booking_id = int(callback.data.split(":", 1)[1])
-    await show_booking_detail(callback, lang, booking_id, "upcoming", 0)
+    await show_booking_detail(callback, lang, booking_id, "active", 0)
     await safe_callback_answer(callback)

@@ -22,9 +22,11 @@ class SupportMessageStatus(str, enum.Enum):
 
 class ServiceOrderStatus(str, enum.Enum):
     NEW = "new"
+    ACCEPTED = "accepted"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    DECLINED = "declined"
 
 
 SERVICE_TYPE_BOOKING = "booking"
@@ -224,6 +226,11 @@ class ServiceOrder(Base):
     details: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default=ServiceOrderStatus.NEW.value, nullable=False)
     admin_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decline_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_by_admin_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    declined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    declined_by_admin_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -232,6 +239,20 @@ class ServiceOrder(Base):
 
     service: Mapped["Service"] = relationship(back_populates="orders")
     client: Mapped["Client"] = relationship(back_populates="orders")
+    messages: Mapped[list["OrderMessage"]] = relationship(back_populates="order", cascade="all, delete-orphan")
+
+
+class OrderMessage(Base):
+    __tablename__ = "order_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("service_orders.id"), nullable=False, index=True)
+    sender_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    sender_telegram_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    order: Mapped["ServiceOrder"] = relationship(back_populates="messages")
 
 
 class CalendarSettings(Base):

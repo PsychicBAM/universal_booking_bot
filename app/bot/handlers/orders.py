@@ -15,7 +15,11 @@ from app.bot.keyboards import (
     services_kb,
 )
 from app.services.booking_notification_service import notify_admins_order_cancelled_by_client
-from app.bot.keyboards.orders_kb import client_order_detail_kb, client_orders_kb
+from app.bot.keyboards.orders_kb import (
+    client_order_detail_kb,
+    client_order_history_kb,
+    client_orders_kb,
+)
 from app.bot.order_client_data import show_order_confirmation, start_order_flow
 from app.bot.states import BookingStates, OrderStates
 from app.bot.utils.callbacks import safe_callback_answer
@@ -25,7 +29,15 @@ from app.bot.utils.telegram_ui import edit_or_send
 from app.database.session import async_session_factory
 from app.models import SERVICE_TYPE_ORDER, ServiceOrderStatus
 from app.repositories import ClientRepository, ServiceOrderRepository, ServiceRepository
-from app.services.order_service import cancel_order, create_order, notify_admins_new_order
+from app.services.order_service import (
+    ORDER_MESSAGE_SENDER_CLIENT,
+    add_order_message,
+    build_order_history_text,
+    cancel_order,
+    create_order,
+    notify_admins_new_order,
+    notify_admins_order_message,
+)
 from app.utils.formatting import format_order_client
 
 router = Router()
@@ -190,6 +202,73 @@ async def my_order_detail(callback: CallbackQuery, lang: str) -> None:
     )
 
 
+@router.callback_query(F.data.regexp(r"^myord:msg:\d+$"))
+async def my_order_message_start(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
+    await safe_callback_answer(callback)
+    order_id = int(callback.data.rsplit(":", 1)[1])
+    async with async_session_factory() as session:
+        order = await ServiceOrderRepository(session).get_by_id(order_id)
+        client = await ClientRepository(session).get_by_telegram_id(callback.from_user.id)
+    if not order or not client or order.client_id != client.id:
+        await callback.message.answer(t(lang, "not_found"))
+        return
+    if order.status not in (
+        ServiceOrderStatus.NEW.value,
+        ServiceOrderStatus.ACCEPTED.value,
+        ServiceOrderStatus.IN_PROGRESS.value,
+    ):
+        await callback.message.answer(t(lang, "not_found"))
+        return
+    await state.update_data(client_order_message_id=order_id, flow_origin="client")
+    await state.set_state(OrderStates.entering_message)
+    await callback.message.answer(t(lang, "order_message_prompt_client"), reply_markup=cancel_kb(lang))
+
+
+@router.message(OrderStates.entering_message, F.text)
+async def my_order_message_save(message: Message, state: FSMContext, bot: Bot, lang: str) -> None:
+    data = await state.get_data()
+    order_id = data.get("client_order_message_id")
+    if not order_id:
+        return
+    text = (message.text or "").strip()
+    if not text:
+        await message.answer(t(lang, "order_message_prompt_client"), reply_markup=cancel_kb(lang))
+        return
+    async with async_session_factory() as session:
+        order = await ServiceOrderRepository(session).get_by_id(order_id)
+        client = await ClientRepository(session).get_by_telegram_id(message.from_user.id)
+        if not order or not client or order.client_id != client.id:
+            await state.clear()
+            await message.answer(t(lang, "not_found"))
+            return
+        service = await ServiceRepository(session).get_by_id(order.service_id)
+        await add_order_message(
+            session,
+            order_id=order_id,
+            sender_type=ORDER_MESSAGE_SENDER_CLIENT,
+            message_text=text,
+            sender_telegram_id=message.from_user.id,
+        )
+        await session.commit()
+    await state.clear()
+    await notify_admins_order_message(bot, order, service, text)
+    await message.answer(t(lang, "order_message_sent_client"))
+
+
+@router.callback_query(F.data.regexp(r"^myord:history:\d+$"))
+async def my_order_history(callback: CallbackQuery, lang: str) -> None:
+    await safe_callback_answer(callback)
+    order_id = int(callback.data.rsplit(":", 1)[1])
+    async with async_session_factory() as session:
+        order = await ServiceOrderRepository(session).get_by_id(order_id)
+        client = await ClientRepository(session).get_by_telegram_id(callback.from_user.id)
+        if not order or not client or order.client_id != client.id:
+            await callback.message.answer(t(lang, "not_found"))
+            return
+        text = await build_order_history_text(session, order_id, lang)
+    await edit_or_send(callback, text, reply_markup=client_order_history_kb(order_id, lang))
+
+
 @router.callback_query(F.data.regexp(r"^myord:cancel:\d+$"))
 async def my_order_cancel(callback: CallbackQuery, lang: str) -> None:
     await safe_callback_answer(callback)
@@ -200,7 +279,11 @@ async def my_order_cancel(callback: CallbackQuery, lang: str) -> None:
         if not order or not client or order.client_id != client.id:
             await callback.message.answer(t(lang, "not_found"))
             return
-        if order.status not in (ServiceOrderStatus.NEW.value, ServiceOrderStatus.IN_PROGRESS.value):
+        if order.status not in (
+            ServiceOrderStatus.NEW.value,
+            ServiceOrderStatus.ACCEPTED.value,
+            ServiceOrderStatus.IN_PROGRESS.value,
+        ):
             await callback.message.answer(t(lang, "not_found"))
             return
         await cancel_order(session, order_id)

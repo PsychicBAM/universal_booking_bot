@@ -924,6 +924,8 @@ async def admin_message_client(callback: CallbackQuery, state: FSMContext, is_ad
 @router.message(AdminMessageStates.entering_message, F.text)
 async def admin_send_message(message: Message, state: FSMContext, bot: Bot, lang: str) -> None:
     data = await state.get_data()
+    if data.get("msg_order_id"):
+        return
     client = None
     async with async_session_factory() as session:
         if data.get("msg_client_id"):

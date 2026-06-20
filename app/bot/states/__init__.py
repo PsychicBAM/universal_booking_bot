@@ -44,6 +44,11 @@ class OrderStates(StatesGroup):
     entering_details = State()
     confirming = State()
     editing_note = State()
+    entering_message = State()
+
+
+class AdminOrderStates(StatesGroup):
+    entering_decline_reason = State()
 
 
 class AdminServiceMediaStates(StatesGroup):
@@ -77,6 +82,10 @@ class WorkingBreakStates(StatesGroup):
 class AdminUnavailableStates(StatesGroup):
     manual_date = State()
     manual_time = State()
+
+
+class AdminBookingSearchStates(StatesGroup):
+    entering_query = State()
 
 
 class AdminMessageStates(StatesGroup):

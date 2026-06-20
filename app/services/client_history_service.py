@@ -149,7 +149,11 @@ def _display_phone(client: Client, bookings: list[Booking]) -> str | None:
 
 
 def _order_stats(orders: list[ServiceOrder]) -> tuple[int, int, int]:
-    active_statuses = {ServiceOrderStatus.NEW.value, ServiceOrderStatus.IN_PROGRESS.value}
+    active_statuses = {
+        ServiceOrderStatus.NEW.value,
+        ServiceOrderStatus.ACCEPTED.value,
+        ServiceOrderStatus.IN_PROGRESS.value,
+    }
     active = sum(1 for order in orders if order.status in active_statuses)
     cancelled = sum(1 for order in orders if order.status == ServiceOrderStatus.CANCELLED.value)
     return active, len(orders), cancelled

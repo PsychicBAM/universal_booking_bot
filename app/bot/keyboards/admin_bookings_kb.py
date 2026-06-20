@@ -7,14 +7,11 @@ from app.services.admin_bookings_service import (
     normalize_bookings_section,
 )
 
-_HUB_SECTIONS = (
-    "upcoming",
-    "pending_admin",
-    "confirmed_bookings",
-    "waiting_client_response",
-    "needs_change",
-    "history",
-    "cancelled",
+_HUB_ACTIONS: tuple[tuple[str, str], ...] = (
+    ("active", "bookings_all_active_button"),
+    ("pending_admin", "bookings_pending_admin_button"),
+    ("history", "bookings_folder_history"),
+    ("cancelled", "bookings_folder_cancelled"),
 )
 
 
@@ -28,9 +25,12 @@ def _view_cb(booking_id: int, section: str, page: int) -> str:
 
 def admin_bookings_hub_kb(lang: str = "ru") -> InlineKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(text=t(lang, f"bookings_folder_{section}"), callback_data=_list_cb(section, 0))]
-        for section in _HUB_SECTIONS
+        [InlineKeyboardButton(text=t(lang, button_key), callback_data=_list_cb(section, 0))]
+        for section, button_key in _HUB_ACTIONS
     ]
+    rows.append(
+        [InlineKeyboardButton(text=t(lang, "bookings_search_button"), callback_data="adm_book:search")]
+    )
     rows.append(
         [InlineKeyboardButton(text=t(lang, "back_to_admin_panel"), callback_data="adm_book:admin_back")]
     )
@@ -43,11 +43,19 @@ def admin_bookings_folder_kb(
     page: int,
     total_pages: int,
     lang: str = "ru",
+    *,
+    service_names: dict[int, str] | None = None,
 ) -> InlineKeyboardMarkup:
     section = normalize_bookings_section(section)
+    service_names = service_names or {}
     rows: list[list[InlineKeyboardButton]] = []
     for booking in bookings:
-        label = format_folder_booking_button(booking, section, lang)
+        label = format_folder_booking_button(
+            booking,
+            section,
+            lang,
+            service_name=service_names.get(booking.service_id),
+        )
         rows.append(
             [
                 InlineKeyboardButton(

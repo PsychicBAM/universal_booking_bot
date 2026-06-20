@@ -102,6 +102,44 @@ async def _migrate_sqlite_columns() -> None:
                 "ALTER TABLE services ADD COLUMN service_type VARCHAR(20) NOT NULL DEFAULT 'booking'"
             )
 
+        result = await conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='service_orders'"
+        )
+        if result.fetchone():
+            result = await conn.exec_driver_sql("PRAGMA table_info(service_orders)")
+            order_columns = {row[1] for row in result.fetchall()}
+            order_new_cols = (
+                ("decline_reason", "TEXT"),
+                ("accepted_at", "DATETIME"),
+                ("accepted_by_admin_id", "INTEGER"),
+                ("declined_at", "DATETIME"),
+                ("declined_by_admin_id", "INTEGER"),
+            )
+            for col, col_type in order_new_cols:
+                if col not in order_columns:
+                    await conn.exec_driver_sql(f"ALTER TABLE service_orders ADD COLUMN {col} {col_type}")
+
+        result = await conn.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='order_messages'"
+        )
+        if not result.fetchone():
+            await conn.exec_driver_sql(
+                """
+                CREATE TABLE order_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    order_id INTEGER NOT NULL,
+                    sender_type VARCHAR(16) NOT NULL,
+                    sender_telegram_id INTEGER,
+                    message_text TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(order_id) REFERENCES service_orders(id)
+                )
+                """
+            )
+            await conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_order_messages_order_id ON order_messages (order_id)"
+            )
+
         result = await conn.exec_driver_sql("PRAGMA table_info(bookings)")
         booking_columns = {row[1] for row in result.fetchall()}
         if "location_text" not in booking_columns:

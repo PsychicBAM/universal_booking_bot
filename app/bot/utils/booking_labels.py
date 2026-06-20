@@ -105,11 +105,15 @@ def format_admin_booking_button(
     *,
     section: str | None = None,
     client: Client | None = None,
+    service_name: str | None = None,
 ) -> str:
     icon = admin_booking_list_icon(booking, section=section)
     dt_label = format_admin_booking_datetime_label(booking.start_at, lang)
     name = truncate_display_name(resolve_booking_display_name(booking, client))
-    return f"{icon} {dt_label} · {name}"
+    parts = [f"{icon} {dt_label}", name]
+    if service_name and service_name.strip():
+        parts.append(truncate_display_name(service_name.strip(), CLIENT_SERVICE_NAME_MAX_LEN))
+    return " · ".join(parts)
 
 
 def resolve_client_service_name(

@@ -10,6 +10,7 @@ from app.models import (
     BotSettings,
     CalendarSettings,
     Client,
+    OrderMessage,
     Service,
     ServiceLocation,
     ServiceMedia,
@@ -321,7 +322,13 @@ class ServiceOrderRepository:
         limit: int = 10,
     ) -> tuple[list[ServiceOrder], int]:
         stmt = select(ServiceOrder).order_by(ServiceOrder.created_at.desc())
-        if status:
+        if status == "in_progress":
+            stmt = stmt.where(
+                ServiceOrder.status.in_(
+                    (ServiceOrderStatus.ACCEPTED.value, ServiceOrderStatus.IN_PROGRESS.value)
+                )
+            )
+        elif status:
             stmt = stmt.where(ServiceOrder.status == status)
         count_stmt = select(func.count()).select_from(stmt.subquery())
         total = int((await self.session.execute(count_stmt)).scalar_one())
@@ -392,8 +399,45 @@ class ServiceOrderRepository:
         if not order:
             return None
         order.status = status
-        if status in (ServiceOrderStatus.COMPLETED.value, ServiceOrderStatus.CANCELLED.value):
+        if status in (
+            ServiceOrderStatus.COMPLETED.value,
+            ServiceOrderStatus.CANCELLED.value,
+            ServiceOrderStatus.DECLINED.value,
+        ):
             order.closed_at = datetime.now(timezone.utc)
+        await self.session.flush()
+        return order
+
+    async def accept_order(
+        self,
+        order_id: int,
+        *,
+        admin_telegram_id: int | None = None,
+    ) -> ServiceOrder | None:
+        order = await self.get_by_id(order_id)
+        if not order:
+            return None
+        order.status = ServiceOrderStatus.ACCEPTED.value
+        order.accepted_at = datetime.now(timezone.utc)
+        order.accepted_by_admin_id = admin_telegram_id
+        await self.session.flush()
+        return order
+
+    async def decline_order(
+        self,
+        order_id: int,
+        reason: str,
+        *,
+        admin_telegram_id: int | None = None,
+    ) -> ServiceOrder | None:
+        order = await self.get_by_id(order_id)
+        if not order:
+            return None
+        order.status = ServiceOrderStatus.DECLINED.value
+        order.decline_reason = reason
+        order.declined_at = datetime.now(timezone.utc)
+        order.declined_by_admin_id = admin_telegram_id
+        order.closed_at = datetime.now(timezone.utc)
         await self.session.flush()
         return order
 
@@ -404,6 +448,38 @@ class ServiceOrderRepository:
         order.admin_note = note
         await self.session.flush()
         return order
+
+
+class OrderMessageRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(
+        self,
+        *,
+        order_id: int,
+        sender_type: str,
+        message_text: str,
+        sender_telegram_id: int | None = None,
+    ) -> OrderMessage:
+        message = OrderMessage(
+            order_id=order_id,
+            sender_type=sender_type,
+            sender_telegram_id=sender_telegram_id,
+            message_text=message_text,
+        )
+        self.session.add(message)
+        await self.session.flush()
+        return message
+
+    async def list_for_order(self, order_id: int, *, limit: int = 20) -> list[OrderMessage]:
+        result = await self.session.execute(
+            select(OrderMessage)
+            .where(OrderMessage.order_id == order_id)
+            .order_by(OrderMessage.created_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
 
 class WorkingHoursRepository:

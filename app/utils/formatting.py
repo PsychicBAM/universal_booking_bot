@@ -2,7 +2,7 @@ from datetime import date, datetime, time
 from html import escape
 
 from app.bot.i18n import format_buffer, format_duration, status_label, t
-from app.models import Booking, BookingStatus, Service, ServiceOrder
+from app.models import Booking, BookingStatus, Service, ServiceOrder, ServiceOrderStatus
 
 
 def format_date(d: date) -> str:
@@ -357,8 +357,15 @@ def _order_status_label(lang: str, status: str) -> str:
     from app.bot.i18n import t
 
     key = f"order_status_{status}"
-    return t(lang, key) if key in ("order_status_new", "order_status_in_progress", "order_status_completed", "order_status_cancelled") else status
-    # fallback - t() will return key if missing
+    known = {
+        "order_status_new",
+        "order_status_accepted",
+        "order_status_in_progress",
+        "order_status_completed",
+        "order_status_cancelled",
+        "order_status_declined",
+    }
+    return t(lang, key) if key in known else status
 
 
 def format_order_admin(
@@ -387,9 +394,11 @@ def format_order_admin(
         [
             "",
             f"{t(lang, 'order_created_at')}: {format_datetime(order.created_at)}",
-            f"{t(lang, 'booking_status_line', status=t(lang, f'order_status_{order.status}'))}",
+            f"{t(lang, 'booking_status_line', status=_order_status_label(lang, order.status))}",
         ]
     )
+    if order.status == ServiceOrderStatus.DECLINED.value and order.decline_reason:
+        lines.extend(["", t(lang, "order_decline_reason_label"), escape(order.decline_reason)])
     if order.admin_note:
         lines.extend(["", t(lang, "order_admin_note_label"), escape(order.admin_note)])
     return "\n".join(lines)
@@ -397,6 +406,7 @@ def format_order_admin(
 
 def format_order_client(order: ServiceOrder, service: Service | None, lang: str) -> str:
     from app.bot.i18n import t
+    from app.models import ServiceOrderStatus
 
     service_name = escape(service.name) if service else f"#{order.service_id}"
     lines = [
@@ -405,8 +415,113 @@ def format_order_client(order: ServiceOrder, service: Service | None, lang: str)
     ]
     if order.details:
         lines.append(f"{t(lang, 'order_details_label')}: {escape(order.details)}")
-    lines.append(t(lang, "booking_status_line", status=t(lang, f"order_status_{order.status}")))
+    lines.append(t(lang, "booking_status_line", status=_order_status_label(lang, order.status)))
+    if order.status == ServiceOrderStatus.DECLINED.value and order.decline_reason:
+        lines.extend(["", t(lang, "order_decline_reason_label"), escape(order.decline_reason)])
     return "\n".join(lines)
+
+
+def format_order_accepted_client_notification(
+    order: ServiceOrder,
+    service: Service | None,
+    lang: str,
+) -> str:
+    from app.bot.i18n import t
+
+    service_name = escape(service.name) if service else f"#{order.service_id}"
+    return "\n".join(
+        [
+            t(lang, "order_accepted_client"),
+            "",
+            f"{t(lang, 'label_service')}: {service_name}",
+            "",
+            t(lang, "order_accepted_client_body"),
+        ]
+    )
+
+
+def format_order_declined_client_notification(
+    order: ServiceOrder,
+    service: Service | None,
+    lang: str,
+) -> str:
+    from app.bot.i18n import t
+
+    service_name = escape(service.name) if service else f"#{order.service_id}"
+    lines = [
+        t(lang, "order_declined_client"),
+        "",
+        f"{t(lang, 'label_service')}: {service_name}",
+        "",
+        t(lang, "order_decline_reason_label"),
+        escape(order.decline_reason or ""),
+    ]
+    return "\n".join(lines)
+
+
+def format_order_new_message_admin_notification(
+    order: ServiceOrder,
+    service: Service | None,
+    message_text: str,
+    lang: str,
+) -> str:
+    from app.bot.i18n import t
+
+    service_name = escape(service.name) if service else f"#{order.service_id}"
+    return "\n".join(
+        [
+            t(lang, "order_new_message_admin_title"),
+            "",
+            f"{t(lang, 'label_service')}: {service_name}",
+            f"{t(lang, 'label_name')}: {escape(order.client_name or t(lang, 'not_provided'))}",
+            f"{t(lang, 'booking_status_line', status=_order_status_label(lang, order.status))}",
+            "",
+            t(lang, "order_message_label"),
+            escape(message_text),
+        ]
+    )
+
+
+def format_order_new_message_client_notification(
+    order: ServiceOrder,
+    service: Service | None,
+    message_text: str,
+    lang: str,
+) -> str:
+    from app.bot.i18n import t
+
+    service_name = escape(service.name) if service else f"#{order.service_id}"
+    return "\n".join(
+        [
+            t(lang, "order_new_message_client_title"),
+            "",
+            f"{t(lang, 'label_service')}: {service_name}",
+            "",
+            escape(message_text),
+        ]
+    )
+
+
+def format_order_message_history(messages, lang: str) -> str:
+    from app.bot.i18n import t
+    from app.utils.datetime_utils import to_local_naive
+
+    lines = [t(lang, "order_history_title"), ""]
+    if not messages:
+        lines.append(t(lang, "order_history_empty"))
+        return "\n".join(lines)
+    for message in messages[-20:]:
+        dt = to_local_naive(message.created_at).strftime("%d.%m %H:%M")
+        if message.sender_type == "client":
+            sender = t(lang, "order_history_sender_client")
+        elif message.sender_type == "admin":
+            sender = t(lang, "order_history_sender_admin")
+        else:
+            sender = t(lang, "order_history_sender_system")
+        lines.append(f"{dt} {sender}:")
+        lines.append(escape(message.message_text))
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 def format_service_type_line(service: Service, lang: str) -> str:

@@ -6,9 +6,11 @@ from app.utils.datetime_utils import to_local_naive
 def _status_emoji(status: str) -> str:
     return {
         ServiceOrderStatus.NEW.value: "🆕",
+        ServiceOrderStatus.ACCEPTED.value: "✅",
         ServiceOrderStatus.IN_PROGRESS.value: "🔄",
         ServiceOrderStatus.COMPLETED.value: "✅",
         ServiceOrderStatus.CANCELLED.value: "❌",
+        ServiceOrderStatus.DECLINED.value: "🚫",
     }.get(status, "📝")
 
 

@@ -15,6 +15,8 @@ from app.bot.states import (
     AdminStartScreenStates,
     AdminConfirmationTextStates,
     AdminClientSearchStates,
+    AdminBookingSearchStates,
+    AdminOrderStates,
     AdminSupportStates,
     AdminUnavailableStates,
     AdminWorkingHoursStates,
@@ -87,14 +89,50 @@ async def global_cancel(message: Message, state: FSMContext, is_admin: bool, lan
         return
 
     if current and current.startswith("OrderStates"):
+        data = await state.get_data()
+        order_id = data.get("client_order_message_id") or data.get("order_note_id")
+        flow_origin = data.get("flow_origin")
         await state.clear()
         await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
+        if is_admin or flow_origin == "admin":
+            from app.bot.utils.menu_helpers import menu_mode_kwargs
+            from app.database.session import async_session_factory
+
+            async with async_session_factory() as session:
+                kwargs = await menu_mode_kwargs(session)
+            await message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang, **kwargs))
+            return
+        if order_id:
+            from app.bot.handlers.orders import my_order_detail
+
+            class _FakeCallback:
+                def __init__(self, msg, oid):
+                    self.message = msg
+                    self.data = f"myord:view:{oid}"
+
+            await my_order_detail(_FakeCallback(message, order_id), lang)
+            return
         from app.bot.utils.menu_helpers import menu_mode_kwargs
         from app.database.session import async_session_factory
 
         async with async_session_factory() as session:
             kwargs = await menu_mode_kwargs(session)
         await message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang, **kwargs))
+        return
+
+    if current.startswith("AdminOrderStates"):
+        data = await state.get_data()
+        order_id = data.get("order_decline_id")
+        await state.clear()
+        await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
+        if order_id:
+            from app.bot.handlers.admin_orders import show_admin_order_detail
+
+            await show_admin_order_detail(message, lang, order_id, "new", 0)
+            return
+        from app.bot.handlers.admin_orders import show_orders_hub
+
+        await show_orders_hub(message, lang)
         return
 
     if current and current.startswith("WorkingBreakStates"):
@@ -215,6 +253,14 @@ async def global_cancel(message: Message, state: FSMContext, is_admin: bool, lan
         await show_clients_main(message, lang)
         return
 
+    if current.startswith("AdminBookingSearchStates"):
+        await state.clear()
+        await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
+        from app.bot.handlers.admin_bookings import show_bookings_hub
+
+        await show_bookings_hub(message, lang)
+        return
+
     destination = await cancel_destination(state, is_admin)
     settings_state = current.startswith("AdminSettingsStates")
     await state.clear()
@@ -328,6 +374,18 @@ async def cancel_flow_callback(callback: CallbackQuery, state: FSMContext, is_ad
         from app.bot.handlers.admin_clients import show_clients_main
 
         await show_clients_main(callback.message, lang)
+        return
+
+    if current.startswith("AdminBookingSearchStates"):
+        await state.clear()
+        await safe_callback_answer(callback, t(lang, "cancelled"))
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
+        from app.bot.handlers.admin_bookings import show_bookings_hub
+
+        await show_bookings_hub(callback.message, lang)
         return
 
     destination = await cancel_destination(state, is_admin)

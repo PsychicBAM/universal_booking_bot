@@ -740,11 +740,16 @@ def main() -> int:
             admin_bookings_folder_kb,
             admin_bookings_hub_kb,
         )
+        from app.bot.i18n import t
         from app.bot.utils.booking_labels import format_admin_booking_button, truncate_display_name
         from app.models import BookingStatus
         from app.services.admin_bookings_service import (
+            build_bookings_hub_body,
             compute_bookings_hub_counts,
             filter_bookings_for_section,
+            normalize_bookings_section,
+            parse_bookings_list_callback,
+            search_bookings,
         )
         from app.utils.formatting import format_booking
 
@@ -807,11 +812,24 @@ def main() -> int:
 
         with patch("app.bot.utils.booking_labels.now_local", return_value=fixed_now):
             with patch("app.services.admin_bookings_service.now_local", return_value=fixed_now):
-                label_ru = format_admin_booking_button(booking, "ru")
-                label_en = format_admin_booking_button(booking, "en")
-                label_confirmed = format_admin_booking_button(booking_tomorrow, "ru")
+                label_ru = format_admin_booking_button(booking, "ru", service_name="Урок")
+                label_en = format_admin_booking_button(booking, "en", service_name="Lesson")
+                label_confirmed = format_admin_booking_button(
+                    booking_tomorrow, "ru", service_name="Тренировка"
+                )
+                label_waiting = format_admin_booking_button(
+                    booking_confirmed_no_response,
+                    "ru",
+                    service_name="Урок",
+                )
+                label_needs_change = format_admin_booking_button(
+                    booking_needs_change,
+                    "ru",
+                    service_name="Урок",
+                )
                 counts = compute_bookings_hub_counts(all_bookings, fixed_now)
                 pending_admin = filter_bookings_for_section(all_bookings, "pending_admin", fixed_now)
+                active = filter_bookings_for_section(all_bookings, "active", fixed_now)
                 upcoming = filter_bookings_for_section(all_bookings, "upcoming", fixed_now)
                 confirmed_bookings = filter_bookings_for_section(
                     all_bookings, "confirmed_bookings", fixed_now
@@ -821,53 +839,131 @@ def main() -> int:
                 )
                 needs_change = filter_bookings_for_section(all_bookings, "needs_change", fixed_now)
                 hub_kb = admin_bookings_hub_kb("ru")
-                folder_kb = admin_bookings_folder_kb(pending_admin, "pending_admin", 0, 1, "ru")
+                hub_body = build_bookings_hub_body(counts, "ru")
+                folder_kb = admin_bookings_folder_kb(
+                    pending_admin,
+                    "pending_admin",
+                    0,
+                    1,
+                    "ru",
+                    service_names={1: "Урок"},
+                )
+                active_kb = admin_bookings_folder_kb(
+                    active,
+                    "active",
+                    0,
+                    1,
+                    "ru",
+                    service_names={1: "Урок"},
+                )
 
         hub_callbacks = [btn.callback_data for row in hub_kb.inline_keyboard for btn in row]
+        hub_buttons = [btn.text for row in hub_kb.inline_keyboard for btn in row]
         if any(cb.startswith("adm_book:view:") or cb.startswith("adm_booking:") for cb in hub_callbacks):
             print("FAIL: test A — hub must not list individual bookings")
             return 1
-        if "adm_book:list:upcoming:0" not in hub_callbacks:
-            print("FAIL: test A — hub missing upcoming folder")
+        for required_cb in (
+            "adm_book:list:active:0",
+            "adm_book:list:pending_admin:0",
+            "adm_book:list:history:0",
+            "adm_book:list:cancelled:0",
+            "adm_book:search",
+            "adm_book:admin_back",
+        ):
+            if required_cb not in hub_callbacks:
+                print(f"FAIL: test E — hub missing callback {required_cb}")
+                return 1
+        for forbidden_cb in (
+            "adm_book:list:upcoming:0",
+            "adm_book:list:confirmed_bookings:0",
+            "adm_book:list:waiting_client_response:0",
+            "adm_book:list:needs_change:0",
+        ):
+            if forbidden_cb in hub_callbacks:
+                print(f"FAIL: test F — hub must not expose old folder {forbidden_cb}")
+                return 1
+        if len(hub_callbacks) != 6:
+            print("FAIL: test E — hub should have 5 actions plus back")
             return 1
-        if "adm_book:list:pending_admin:0" not in hub_callbacks:
-            print("FAIL: test A — hub missing pending admin folder")
+        for label in (
+            t("ru", "bookings_all_active_button"),
+            t("ru", "bookings_pending_admin_button"),
+            t("ru", "bookings_folder_history"),
+            t("ru", "bookings_folder_cancelled"),
+            t("ru", "bookings_search_button"),
+            t("ru", "back_to_admin_panel"),
+        ):
+            if label not in hub_buttons:
+                print(f"FAIL: test E — hub missing button {label}")
+                return 1
+        for forbidden_label in (
+            t("ru", "bookings_folder_upcoming"),
+            t("ru", "bookings_folder_confirmed_bookings"),
+            t("ru", "bookings_folder_waiting_client_response"),
+            t("ru", "bookings_folder_needs_change"),
+            "Требуют внимания",
+            "Need attention",
+        ):
+            if forbidden_label in hub_buttons:
+                print(f"FAIL: test F — hub must not show {forbidden_label}")
+                return 1
+        if t("ru", "bookings_active_summary", count=str(counts.active_count)) not in hub_body:
+            print("FAIL: test E — hub body missing active summary")
             return 1
-        if "adm_book:list:waiting_client_response:0" not in hub_callbacks:
-            print("FAIL: test A — hub missing waiting client response folder")
-            return 1
-        if len(hub_callbacks) != 8:
-            print("FAIL: test A — hub should have 7 folders plus back")
+        if t("ru", "bookings_choose_action") not in hub_body:
+            print("FAIL: test E — hub body missing choose action")
             return 1
 
-        if label_ru != "🕓 Сегодня 21:30 · Abdallah Bahi":
-            print("FAIL: admin booking button RU label mismatch")
+        for legacy in (
+            "upcoming",
+            "confirmed_bookings",
+            "waiting_client_response",
+            "needs_change",
+        ):
+            mapped_section, _ = parse_bookings_list_callback(f"adm_book:list:{legacy}:0")
+            if mapped_section != "active":
+                print(f"FAIL: test G — legacy section {legacy} must map to active")
+                return 1
+        from app.services.admin_bookings_service import resolve_bookings_list_section
+
+        if resolve_bookings_list_section("pending_admin") != "pending_admin":
+            print("FAIL: test G — pending_admin section must stay pending_admin")
             return 1
-        if label_en != "🕓 Today 21:30 · Abdallah Bahi":
-            print("FAIL: admin booking button EN label mismatch")
+
+        if label_ru != "🕓 Сегодня 21:30 · Abdallah Bahi · Урок":
+            print(f"FAIL: admin booking button RU label mismatch: {label_ru!r}")
+            return 1
+        if label_en != "🕓 Today 21:30 · Abdallah Bahi · Lesson":
+            print(f"FAIL: admin booking button EN label mismatch: {label_en!r}")
             return 1
         if "#26" in label_ru:
             print("FAIL: booking id visible in list button")
             return 1
-        if label_confirmed != "✅ Завтра 13:00 · Maria":
-            print("FAIL: confirmed tomorrow label mismatch")
+        if label_confirmed != "✅ Завтра 13:00 · Maria · Тренировка":
+            print(f"FAIL: confirmed tomorrow label mismatch: {label_confirmed!r}")
+            return 1
+        if label_waiting != "❔ Сегодня 20:00 · Maria · Урок":
+            print(f"FAIL: waiting client response label mismatch: {label_waiting!r}")
+            return 1
+        if label_needs_change != "⚠️ 19.06 12:00 · Maria · Урок":
+            print(f"FAIL: needs change label mismatch: {label_needs_change!r}")
             return 1
         truncated = truncate_display_name(long_name)
         if len(truncated) > 28 or not truncated.endswith("…"):
             print("FAIL: name truncation length or suffix")
             return 1
 
+        if counts.active_count != 4 or counts.upcoming_count != 4:
+            print("FAIL: test C — active/upcoming count")
+            return 1
+        if len(active) != 4 or active != upcoming:
+            print("FAIL: test C — active folder must match upcoming filter")
+            return 1
         if counts.pending_admin_count != 1:
             print("FAIL: test A/B — pending admin count")
             return 1
         if len(pending_admin) != 1 or pending_admin[0].id != 26:
             print("FAIL: test A/B — pending admin folder filter")
-            return 1
-        if counts.upcoming_count != 4:
-            print("FAIL: test C — upcoming count")
-            return 1
-        if len(upcoming) != 4:
-            print("FAIL: test C — upcoming folder filter")
             return 1
         if counts.confirmed_bookings_count != 3 or len(confirmed_bookings) != 3:
             print("FAIL: test B — confirmed bookings count/filter")
@@ -883,6 +979,15 @@ def main() -> int:
             return 1
         if counts.needs_change_count != 1 or len(needs_change) != 1:
             print("FAIL: test D — needs change count/filter")
+            return 1
+
+        search_hits = search_bookings(all_bookings, "Abdallah", {1: "Урок"})
+        if not search_hits or search_hits[0].id != 26:
+            print("FAIL: booking search by client name")
+            return 1
+        search_id = search_bookings(all_bookings, "31", {1: "Урок"})
+        if not search_id or search_id[0].id != 31:
+            print("FAIL: booking search by id")
             return 1
 
         booking_confirmed = _booking(
@@ -913,6 +1018,44 @@ def main() -> int:
         if "adm_book:hub" not in folder_callbacks:
             print("FAIL: test E — folder back to hub")
             return 1
+        pending_labels = [btn.text for row in folder_kb.inline_keyboard for btn in row if btn.callback_data.startswith("adm_book:view:")]
+        if not pending_labels or not pending_labels[0].startswith("🕓"):
+            print("FAIL: test I — pending admin row must use pending icon")
+            return 1
+        if " · Урок" not in pending_labels[0]:
+            print("FAIL: test I — pending admin row must include service name")
+            return 1
+        active_labels = [btn.text for row in active_kb.inline_keyboard for btn in row if btn.callback_data.startswith("adm_book:view:")]
+        if len(active_labels) < 4:
+            print("FAIL: test I — active folder should list active bookings")
+            return 1
+        if not any(text.startswith("❔") for text in active_labels):
+            print("FAIL: test I — active folder must show waiting-client icon rows")
+            return 1
+        if not any(text.startswith("⚠️") for text in active_labels):
+            print("FAIL: test I — active folder must show needs-change icon rows")
+            return 1
+
+        from app.bot.keyboards.orders_kb import admin_orders_hub_kb
+
+        orders_hub_callbacks = [
+            btn.callback_data
+            for row in admin_orders_hub_kb(
+                {"new": 1, "in_progress": 0, "completed": 0, "cancelled": 0, "declined": 0},
+                "ru",
+            ).inline_keyboard
+            for btn in row
+        ]
+        for required_order_cb in (
+            "ord:folder:new:0",
+            "ord:folder:in_progress:0",
+            "ord:folder:completed:0",
+            "ord:folder:cancelled:0",
+            "ord:folder:declined:0",
+        ):
+            if required_order_cb not in orders_hub_callbacks:
+                print(f"FAIL: test H — orders hub callback missing {required_order_cb}")
+                return 1
 
         import inspect
 
@@ -1205,6 +1348,17 @@ def main() -> int:
             raise AssertionError("menu routing — RU admin/client services labels must differ")
         if t("en", "admin_services") == t("en", "main_menu_services"):
             raise AssertionError("menu routing — EN admin/client services labels must differ")
+
+        if t("ru", "admin_services") != "🛠 Услуги":
+            raise AssertionError("test B — RU admin services button must be short")
+        if t("en", "admin_services") != "🛠 Services":
+            raise AssertionError("test B — EN admin services button must be short")
+        if "Управление" in t("ru", "admin_services"):
+            raise AssertionError("test B — admin services button must not use long manage label")
+        if t("ru", "main_menu_services") != "📋 Выбрать услугу":
+            raise AssertionError("test A — RU client services button must be choose-service label")
+        if t("en", "main_menu_services") != "📋 Choose service":
+            raise AssertionError("test A — EN client services button must be choose-service label")
 
         admin_hub_text = _services_hub_text(2, 1, 0, "ru")
         if t("ru", "services_hub_intro") not in admin_hub_text:
@@ -1552,6 +1706,104 @@ def main() -> int:
         print("OK: ReminderService log_action_timing import")
     except Exception as exc:
         print(f"FAIL: ReminderService import audit — {exc}")
+        return 1
+
+    try:
+        from types import SimpleNamespace
+
+        from app.bot.i18n import t
+        from app.bot.keyboards.orders_kb import (
+            admin_new_order_kb,
+            admin_order_detail_kb,
+            client_order_detail_kb,
+        )
+        from app.bot.states import AdminOrderStates
+        from app.models import OrderMessage, ServiceOrderStatus
+        from app.utils.formatting import (
+            format_order_accepted_client_notification,
+            format_order_declined_client_notification,
+        )
+
+        if OrderMessage.__tablename__ != "order_messages":
+            raise AssertionError("test D — order_messages model missing")
+        if ServiceOrderStatus.ACCEPTED.value != "accepted":
+            raise AssertionError("test B — accepted status missing")
+        if ServiceOrderStatus.DECLINED.value != "declined":
+            raise AssertionError("test C — declined status missing")
+        if not hasattr(AdminOrderStates, "entering_decline_reason"):
+            raise AssertionError("test C — decline reason FSM missing")
+
+        new_kb_callbacks = [
+            btn.callback_data for row in admin_new_order_kb(7, "ru").inline_keyboard for btn in row
+        ]
+        new_kb_texts = [btn.text for row in admin_new_order_kb(7, "ru").inline_keyboard for btn in row]
+        if "ord:accept:7" not in new_kb_callbacks:
+            raise AssertionError("test A — admin new order notification missing accept callback")
+        if "ord:decline:7" not in new_kb_callbacks:
+            raise AssertionError("test A — admin new order notification missing decline callback")
+        if t("ru", "order_accept_button") not in new_kb_texts:
+            raise AssertionError("test A — admin new order notification missing accept button")
+        if t("ru", "order_decline_button") not in new_kb_texts:
+            raise AssertionError("test A — admin new order notification missing decline button")
+
+        new_detail = {
+            btn.callback_data
+            for row in admin_order_detail_kb(7, ServiceOrderStatus.NEW.value, "new", 0, "ru").inline_keyboard
+            for btn in row
+        }
+        accepted_detail = {
+            btn.callback_data
+            for row in admin_order_detail_kb(
+                7, ServiceOrderStatus.ACCEPTED.value, "in_progress", 0, "ru"
+            ).inline_keyboard
+            for btn in row
+        }
+        if "ord:accept:7" not in new_detail or "ord:decline:7" not in new_detail:
+            raise AssertionError("test G — new order detail must offer accept/decline")
+        if "ord:status:in_progress:7" not in accepted_detail:
+            raise AssertionError("test G — accepted order detail must offer mark in progress")
+        if "ord:status:in_progress:7" in new_detail:
+            raise AssertionError("test G — new order detail must not skip approval")
+
+        client_active = {
+            btn.callback_data
+            for row in client_order_detail_kb(7, ServiceOrderStatus.ACCEPTED.value, "ru").inline_keyboard
+            for btn in row
+        }
+        client_declined = {
+            btn.callback_data
+            for row in client_order_detail_kb(7, ServiceOrderStatus.DECLINED.value, "ru").inline_keyboard
+            for btn in row
+        }
+        if "myord:msg:7" not in client_active:
+            raise AssertionError("test G — active client order must allow writing to order")
+        if "myord:cancel:7" not in client_active:
+            raise AssertionError("test G — active client order must allow cancel")
+        if "myord:cancel:7" in client_declined:
+            raise AssertionError("test G — declined client order must not allow cancel")
+
+        service = SimpleNamespace(name="Telegram bot", service_type="order")
+        order = SimpleNamespace(
+            id=7,
+            service_id=1,
+            decline_reason="Сейчас не смогу выполнить эту услугу.",
+            status=ServiceOrderStatus.DECLINED.value,
+        )
+        accepted_text = format_order_accepted_client_notification(order, service, "ru")
+        declined_text = format_order_declined_client_notification(order, service, "ru")
+        if not isinstance(accepted_text, str) or t("ru", "order_accepted_client") not in accepted_text:
+            raise AssertionError("test B — accepted client notification missing")
+        if "Сейчас не смогу выполнить эту услугу." not in declined_text:
+            raise AssertionError("test C — declined client notification must include reason")
+
+        from app.services.order_service import ORDER_MESSAGE_SENDER_ADMIN, ORDER_MESSAGE_SENDER_CLIENT
+
+        if ORDER_MESSAGE_SENDER_ADMIN != "admin" or ORDER_MESSAGE_SENDER_CLIENT != "client":
+            raise AssertionError("test E/F — order message sender constants missing")
+
+        print("OK: order approval workflow")
+    except Exception as exc:
+        print(f"FAIL: order approval workflow — {exc}")
         return 1
 
     try:

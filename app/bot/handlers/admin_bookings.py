@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.i18n import t
-from app.bot.keyboards import ADMIN_BOOKINGS_TEXTS, admin_menu, cancel_kb
+from app.bot.keyboards import ADMIN_BOOKINGS_TEXTS, cancel_kb
 from app.bot.keyboards.admin_bookings_kb import (
     admin_booking_detail_kb,
     admin_bookings_folder_kb,
@@ -13,6 +13,7 @@ from app.bot.keyboards.admin_bookings_kb import (
 )
 from app.bot.states import AdminBookingSearchStates
 from app.bot.utils.callbacks import safe_callback_answer
+from app.bot.utils.menu_helpers import show_admin_panel
 from app.bot.utils.telegram_ui import edit_or_send, safe_edit_text
 from app.database.session import async_session_factory
 from app.models import Client
@@ -145,7 +146,7 @@ async def admin_bookings_back_to_panel(callback: CallbackQuery, is_admin: bool, 
     if not is_admin:
         return
     await safe_callback_answer(callback)
-    await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+    await show_admin_panel(callback.message, lang)
 
 
 @router.callback_query(F.data.regexp(r"^adm_book:list:"))

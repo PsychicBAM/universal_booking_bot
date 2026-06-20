@@ -6,7 +6,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from app.bot.i18n import t
-from app.bot.keyboards import CONTACT_ADMIN_TEXTS, admin_menu, cancel_kb, main_menu
+from app.bot.keyboards import CONTACT_ADMIN_TEXTS, cancel_kb, main_menu
+from app.bot.utils.menu_helpers import mode_aware_admin_menu, show_admin_panel
 from app.bot.keyboards.support_kb import (
     format_request_list_label,
     support_booking_pick_kb,
@@ -382,7 +383,7 @@ async def admin_support_send_reply(
     message_id = data.get("support_message_id")
     if not message_id:
         await state.clear()
-        await message.answer(t(lang, "not_found"), reply_markup=admin_menu(lang))
+        await message.answer(t(lang, "not_found"), reply_markup=await mode_aware_admin_menu(lang))
         return
 
     async with async_session_factory() as session:
@@ -390,7 +391,7 @@ async def admin_support_send_reply(
         support_msg = await repo.get_by_id(int(message_id))
         if not support_msg or support_msg.status == SupportMessageStatus.CLOSED:
             await state.clear()
-            await message.answer(t(lang, "not_found"), reply_markup=admin_menu(lang))
+            await message.answer(t(lang, "not_found"), reply_markup=await mode_aware_admin_menu(lang))
             return
 
         client_lang = await get_user_language(session, support_msg.client_telegram_id)
@@ -412,7 +413,7 @@ async def admin_support_send_reply(
         await session.commit()
 
     await state.clear()
-    await message.answer(t(lang, "support_reply_sent"), reply_markup=admin_menu(lang))
+    await message.answer(t(lang, "support_reply_sent"), reply_markup=await mode_aware_admin_menu(lang))
 
 
 @router.callback_query(F.data.regexp(r"^sup:close:\d+$"))

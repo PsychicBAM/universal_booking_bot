@@ -221,12 +221,115 @@ def order_history_kb(order_id: int, section: str, page: int, lang: str) -> Inlin
     )
 
 
-def client_order_history_kb(order_id: int, lang: str) -> InlineKeyboardMarkup:
+def client_order_history_kb(order_id: int, section: str, lang: str) -> InlineKeyboardMarkup:
+    back_cb = f"myord:view:{order_id}:{section}" if section in ("active", "history") else f"myord:view:{order_id}"
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text=t(lang, "back"), callback_data=f"myord:view:{order_id}")],
+            [InlineKeyboardButton(text=t(lang, "back"), callback_data=back_cb)],
         ]
     )
+
+
+def client_orders_hub_kb(counts, lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "my_orders_active_button", count=str(counts.active_count)),
+                    callback_data="myord:active",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "my_orders_history_button", count=str(counts.history_count)),
+                    callback_data="myord:history",
+                )
+            ],
+            [InlineKeyboardButton(text=t(lang, "back_main"), callback_data="myord:back")],
+        ]
+    )
+
+
+def client_orders_empty_active_kb(counts, lang: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if counts.history_count > 0:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "my_orders_history_button", count=str(counts.history_count)),
+                    callback_data="myord:history",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text=t(lang, "my_orders_back_to_hub"), callback_data="myord:hub")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def client_orders_empty_history_kb(counts, lang: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if counts.active_count > 0:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "my_orders_active_button", count=str(counts.active_count)),
+                    callback_data="myord:active",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text=t(lang, "my_orders_back_to_hub"), callback_data="myord:hub")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def client_orders_active_kb(
+    orders: list[ServiceOrder],
+    lang: str,
+    *,
+    service_names: dict[int, str] | None = None,
+) -> InlineKeyboardMarkup:
+    from app.bot.utils.order_labels import format_client_order_button
+
+    service_names = service_names or {}
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=format_client_order_button(
+                    order,
+                    lang,
+                    service_name=service_names.get(order.service_id),
+                ),
+                callback_data=f"myord:view:{order.id}:active",
+            )
+        ]
+        for order in orders
+    ]
+    rows.append([InlineKeyboardButton(text=t(lang, "my_orders_back_to_hub"), callback_data="myord:hub")])
+    return InlineKeyboardMarkup(inline_keyboard=rows or [[InlineKeyboardButton(text="—", callback_data="noop")]])
+
+
+def client_orders_history_kb(
+    orders: list[ServiceOrder],
+    lang: str,
+    *,
+    service_names: dict[int, str] | None = None,
+) -> InlineKeyboardMarkup:
+    from app.bot.utils.order_labels import format_client_order_button
+
+    service_names = service_names or {}
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=format_client_order_button(
+                    order,
+                    lang,
+                    service_name=service_names.get(order.service_id),
+                ),
+                callback_data=f"myord:view:{order.id}:history",
+            )
+        ]
+        for order in orders
+    ]
+    rows.append([InlineKeyboardButton(text=t(lang, "my_orders_back_to_hub"), callback_data="myord:hub")])
+    return InlineKeyboardMarkup(inline_keyboard=rows or [[InlineKeyboardButton(text="—", callback_data="noop")]])
 
 
 def client_orders_kb(orders: list[ServiceOrder], lang: str) -> InlineKeyboardMarkup:
@@ -242,7 +345,7 @@ def client_orders_kb(orders: list[ServiceOrder], lang: str) -> InlineKeyboardMar
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def client_order_detail_kb(order_id: int, status: str, lang: str) -> InlineKeyboardMarkup:
+def client_order_detail_kb(order_id: int, status: str, lang: str, *, section: str = "hub") -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if status in (
         ServiceOrderStatus.NEW.value,
@@ -252,13 +355,27 @@ def client_order_detail_kb(order_id: int, status: str, lang: str) -> InlineKeybo
         rows.append(
             [InlineKeyboardButton(text=t(lang, "order_write_to_order_button"), callback_data=f"myord:msg:{order_id}")]
         )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=t(lang, "order_message_history_button"),
+                callback_data=f"myord:history:{order_id}:{section}",
+            )
+        ]
+    )
     if status in (
         ServiceOrderStatus.NEW.value,
         ServiceOrderStatus.ACCEPTED.value,
         ServiceOrderStatus.IN_PROGRESS.value,
     ):
         rows.append(
-            [InlineKeyboardButton(text=t(lang, "order_cancel_client"), callback_data=f"myord:cancel:{order_id}")]
+            [InlineKeyboardButton(text=t(lang, "order_cancel_client"), callback_data=f"myord:cancel:{order_id}:{section}")]
         )
-    rows.append([InlineKeyboardButton(text=t(lang, "back_main"), callback_data="myord:list")])
+    if section == "active":
+        back_cb = "myord:active"
+    elif section == "history":
+        back_cb = "myord:history"
+    else:
+        back_cb = "myord:hub"
+    rows.append([InlineKeyboardButton(text=t(lang, "back"), callback_data=back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)

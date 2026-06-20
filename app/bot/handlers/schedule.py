@@ -12,7 +12,7 @@ from app.bot.utils.telegram_ui import edit_or_send, safe_edit_text
 from app.database.session import async_session_factory
 from app.repositories import WorkingBreakRepository
 from app.services.service_modes_service import load_service_modes
-from app.services.unavailable_service import list_upcoming_unavailable
+from app.bot.utils.menu_helpers import show_admin_panel
 from app.services.working_break_service import breaks_by_weekday
 from app.services.working_hours_service import get_weekly_schedule
 
@@ -85,7 +85,7 @@ async def schedule_back_admin(callback: CallbackQuery, is_admin: bool, lang: str
         await callback.message.delete()
     except Exception:
         pass
-    await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+    await show_admin_panel(callback.message, lang)
 
 
 @router.callback_query(F.data == "sch:quick")

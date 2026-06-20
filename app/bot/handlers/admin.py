@@ -7,7 +7,7 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.utils.callbacks import safe_callback_answer
 from app.bot.handlers.admin_bookings import show_bookings_hub
-from app.bot.utils.menu_helpers import menu_mode_kwargs
+from app.bot.utils.menu_helpers import menu_mode_kwargs, mode_aware_admin_menu, show_admin_panel
 from app.bot.utils.telegram_ui import edit_or_send, safe_edit_text
 
 from app.bot.i18n import format_buffer, format_duration, t
@@ -333,7 +333,7 @@ async def admin_services_back_to_panel(callback: CallbackQuery, is_admin: bool, 
     if not is_admin:
         return
     await callback.message.delete()
-    await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+    await show_admin_panel(callback.message, lang)
     await safe_callback_answer(callback)
 
 
@@ -938,7 +938,7 @@ async def admin_send_message(message: Message, state: FSMContext, bot: Bot, lang
             client = None
     if not client:
         await state.clear()
-        await message.answer(t(lang, "not_found"), reply_markup=admin_menu(lang))
+        await message.answer(t(lang, "not_found"), reply_markup=await mode_aware_admin_menu(lang))
         return
     client_lang = client.language or get_settings().default_language
     try:
@@ -948,10 +948,10 @@ async def admin_send_message(message: Message, state: FSMContext, bot: Bot, lang
         )
     except Exception:
         await state.clear()
-        await message.answer(t(lang, "message_send_failed"), reply_markup=admin_menu(lang))
+        await message.answer(t(lang, "message_send_failed"), reply_markup=await mode_aware_admin_menu(lang))
         return
     await state.clear()
-    await message.answer(t(lang, "message_sent"), reply_markup=admin_menu(lang))
+    await message.answer(t(lang, "message_sent"), reply_markup=await mode_aware_admin_menu(lang))
 
 
 @router.message(F.text.in_(ADMIN_CALENDAR_TEXTS))

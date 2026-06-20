@@ -11,12 +11,11 @@ from app.bot.keyboards import (
     ADMIN_MENU_TEXTS,
     BACK_MAIN_TEXTS,
     LANGUAGE_TEXTS,
-    admin_menu,
     language_kb,
     main_menu,
 )
+from app.bot.utils.menu_helpers import menu_mode_kwargs, show_admin_panel
 from app.database.session import async_session_factory
-from app.bot.utils.menu_helpers import menu_mode_kwargs
 from app.repositories import ClientRepository
 from app.services.language_service import effective_lang, parse_enabled_languages_value
 from app.services.start_screen_service import deliver_start_screen
@@ -36,9 +35,7 @@ async def cmd_admin(message: Message, state: FSMContext, is_admin: bool, lang: s
     if not is_admin:
         await message.answer(t(lang, "access_denied"))
         return
-    async with async_session_factory() as session:
-        kwargs = await menu_mode_kwargs(session)
-    await message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang, **kwargs))
+    await show_admin_panel(message, lang)
 
 
 @router.message(F.text.in_(ADMIN_MENU_TEXTS))
@@ -46,9 +43,7 @@ async def open_admin(message: Message, is_admin: bool, lang: str) -> None:
     if not is_admin:
         await message.answer(t(lang, "access_denied"))
         return
-    async with async_session_factory() as session:
-        kwargs = await menu_mode_kwargs(session)
-    await message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang, **kwargs))
+    await show_admin_panel(message, lang)
 
 
 @router.message(F.text.in_(BACK_MAIN_TEXTS))

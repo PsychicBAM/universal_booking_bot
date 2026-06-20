@@ -6,7 +6,9 @@ from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from app.bot.utils.callbacks import safe_callback_answer
 
 from app.bot.i18n import CANCEL_TEXTS, t
-from app.bot.keyboards import admin_menu, main_menu
+from app.bot.keyboards import main_menu
+from app.bot.utils.menu_helpers import menu_mode_kwargs, show_admin_panel
+from app.database.session import async_session_factory
 from app.bot.keyboards.attendance_kb import attendance_action_kb
 from app.bot.settings_ui import send_settings_main_after_cancel
 from app.bot.states import (
@@ -66,9 +68,11 @@ async def cancel_destination(state: FSMContext, is_admin: bool) -> str:
 
 async def _send_cancel_destination(message: Message, destination: str, is_admin: bool, lang: str) -> None:
     if destination == "admin":
-        await message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+        await show_admin_panel(message, lang)
     else:
-        await message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        async with async_session_factory() as session:
+            kwargs = await menu_mode_kwargs(session)
+        await message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang, **kwargs))
 
 
 @router.message(F.text.in_(CANCEL_TEXTS))
@@ -95,22 +99,12 @@ async def global_cancel(message: Message, state: FSMContext, is_admin: bool, lan
         await state.clear()
         await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
         if is_admin or flow_origin == "admin":
-            from app.bot.utils.menu_helpers import menu_mode_kwargs
-            from app.database.session import async_session_factory
-
-            async with async_session_factory() as session:
-                kwargs = await menu_mode_kwargs(session)
-            await message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang, **kwargs))
+            await show_admin_panel(message, lang)
             return
         if order_id:
-            from app.bot.handlers.orders import my_order_detail
+            from app.bot.handlers.orders import show_my_order_detail
 
-            class _FakeCallback:
-                def __init__(self, msg, oid):
-                    self.message = msg
-                    self.data = f"myord:view:{oid}"
-
-            await my_order_detail(_FakeCallback(message, order_id), lang)
+            await show_my_order_detail(message, lang, order_id)
             return
         from app.bot.utils.menu_helpers import menu_mode_kwargs
         from app.database.session import async_session_factory
@@ -242,7 +236,7 @@ async def global_cancel(message: Message, state: FSMContext, is_admin: bool, lan
     if current.startswith("AdminSupportStates"):
         await state.clear()
         await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
-        await message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+        await show_admin_panel(message, lang)
         return
 
     if current.startswith("AdminClientSearchStates"):
@@ -361,7 +355,7 @@ async def cancel_flow_callback(callback: CallbackQuery, state: FSMContext, is_ad
     if current.startswith("AdminSupportStates"):
         await state.clear()
         await safe_callback_answer(callback, t(lang, "cancelled"))
-        await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+        await show_admin_panel(callback.message, lang)
         return
 
     if current.startswith("AdminClientSearchStates"):
@@ -399,7 +393,9 @@ async def cancel_flow_callback(callback: CallbackQuery, state: FSMContext, is_ad
             pass
         await callback.message.answer(t(lang, "cancelled"))
     if destination == "admin":
-        await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+        await show_admin_panel(callback.message, lang)
     else:
-        await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        async with async_session_factory() as session:
+            kwargs = await menu_mode_kwargs(session)
+        await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang, **kwargs))
     await safe_callback_answer(callback)

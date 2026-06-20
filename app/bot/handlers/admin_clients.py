@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.i18n import t
-from app.bot.keyboards import ADMIN_CLIENTS_TEXTS, admin_menu, cancel_kb
+from app.bot.keyboards import ADMIN_CLIENTS_TEXTS, cancel_kb
 from app.bot.keyboards.admin_clients_kb import (
     admin_client_bookings_kb,
     admin_client_detail_kb,
@@ -14,6 +14,7 @@ from app.bot.keyboards.admin_clients_kb import (
     admin_clients_search_results_kb,
 )
 from app.bot.states import AdminClientSearchStates, AdminMessageStates
+from app.bot.utils.menu_helpers import show_admin_panel
 from app.bot.utils.callbacks import safe_callback_answer
 from app.bot.utils.telegram_ui import edit_or_send
 from app.database.session import async_session_factory
@@ -171,7 +172,7 @@ async def clients_back_admin(callback: CallbackQuery, is_admin: bool, lang: str)
         await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
         return
     await safe_callback_answer(callback)
-    await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang))
+    await show_admin_panel(callback.message, lang)
 
 
 @router.callback_query(F.data == "adm_cli:menu")

@@ -14,7 +14,7 @@ from app.bot.keyboards.orders_kb import (
 )
 from app.bot.states import AdminMessageStates, AdminOrderStates, OrderStates
 from app.bot.utils.callbacks import safe_callback_answer
-from app.bot.utils.menu_helpers import menu_mode_kwargs
+from app.bot.utils.menu_helpers import menu_mode_kwargs, show_admin_panel
 from app.bot.utils.telegram_ui import edit_or_send, safe_edit_text
 from app.database.session import async_session_factory
 from app.models import Client, ServiceOrderStatus
@@ -101,13 +101,7 @@ async def admin_orders_back(callback: CallbackQuery, is_admin: bool, lang: str) 
     if not is_admin:
         return
     await safe_callback_answer(callback)
-    async with async_session_factory() as session:
-        kwargs = await menu_mode_kwargs(session)
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-    await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang, **kwargs))
+    await show_admin_panel(callback.message, lang)
 
 
 @router.callback_query(F.data.regexp(r"^ord:folder:[a-z_]+:\d+$"))

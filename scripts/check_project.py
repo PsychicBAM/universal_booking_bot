@@ -524,8 +524,8 @@ def main() -> int:
         sch_back_src = inspect.getsource(
             __import__("app.bot.handlers.schedule", fromlist=["schedule_back_admin"]).schedule_back_admin
         )
-        if "admin_menu" not in sch_back_src:
-            print("FAIL: test E — schedule back should return clean admin panel")
+        if "show_admin_panel" not in sch_back_src:
+            print("FAIL: test E — schedule back should return mode-aware admin panel")
             return 1
         if ADMIN_SCHEDULE_TEXTS:
             print("OK: admin schedule panel layout and legacy routing")
@@ -1401,6 +1401,38 @@ def main() -> int:
         }
         if t("ru", "book_appointment") in client_order or t("ru", "my_bookings") in client_order:
             raise AssertionError("test C — booking buttons must be hidden in order-only mode")
+        if not t("ru", "order_services_button").startswith("🛒"):
+            raise AssertionError("test A — order service button must use cart icon")
+        if not t("ru", "my_orders_button").startswith("🗂"):
+            raise AssertionError("test A — my orders button must use folder icon")
+        if t("ru", "order_services_button")[0] == t("ru", "my_orders_button")[0]:
+            raise AssertionError("test A — order service and my orders icons must differ")
+
+        order_only_admin = {
+            btn.text for row in admin_menu("ru", booking_enabled=False, order_enabled=True).keyboard for btn in row
+        }
+        if t("ru", "orders_admin_button") not in order_only_admin:
+            raise AssertionError("test C — order-only admin menu must show orders")
+        if t("ru", "admin_bookings") in order_only_admin or t("ru", "schedule_button") in order_only_admin:
+            raise AssertionError("test C — order-only admin menu must hide bookings/schedule")
+        clients_back_menu = {
+            btn.text
+            for row in admin_menu("ru", booking_enabled=False, order_enabled=True).keyboard
+            for btn in row
+        }
+        if t("ru", "admin_bookings") in clients_back_menu:
+            raise AssertionError("test D — clients back admin menu must be mode-aware (no bookings in order-only)")
+
+        import inspect
+
+        clients_back_src = inspect.getsource(
+            __import__(
+                "app.bot.handlers.admin_clients",
+                fromlist=["clients_back_admin"],
+            ).clients_back_admin
+        )
+        if "show_admin_panel" not in clients_back_src:
+            raise AssertionError("test D — clients back must use show_admin_panel helper")
 
         # Test D — simplified clients hub
         client_hub = {btn.text for row in admin_clients_main_kb("ru").inline_keyboard for btn in row}
@@ -1767,20 +1799,26 @@ def main() -> int:
 
         client_active = {
             btn.callback_data
-            for row in client_order_detail_kb(7, ServiceOrderStatus.ACCEPTED.value, "ru").inline_keyboard
+            for row in client_order_detail_kb(
+                7, ServiceOrderStatus.ACCEPTED.value, "ru", section="active"
+            ).inline_keyboard
             for btn in row
         }
         client_declined = {
             btn.callback_data
-            for row in client_order_detail_kb(7, ServiceOrderStatus.DECLINED.value, "ru").inline_keyboard
+            for row in client_order_detail_kb(
+                7, ServiceOrderStatus.DECLINED.value, "ru", section="history"
+            ).inline_keyboard
             for btn in row
         }
         if "myord:msg:7" not in client_active:
             raise AssertionError("test G — active client order must allow writing to order")
-        if "myord:cancel:7" not in client_active:
+        if "myord:cancel:7:active" not in client_active:
             raise AssertionError("test G — active client order must allow cancel")
-        if "myord:cancel:7" in client_declined:
+        if "myord:cancel:7:active" in client_declined or "myord:cancel:7:history" in client_declined:
             raise AssertionError("test G — declined client order must not allow cancel")
+        if "myord:active" not in client_active:
+            raise AssertionError("test E — detail back must return to active section")
 
         service = SimpleNamespace(name="Telegram bot", service_type="order")
         order = SimpleNamespace(
@@ -1804,6 +1842,105 @@ def main() -> int:
         print("OK: order approval workflow")
     except Exception as exc:
         print(f"FAIL: order approval workflow — {exc}")
+        return 1
+
+    try:
+        from datetime import datetime
+        from types import SimpleNamespace
+
+        from app.bot.i18n import t
+        from app.bot.keyboards.orders_kb import (
+            client_orders_active_kb,
+            client_orders_history_kb,
+            client_orders_hub_kb,
+        )
+        from app.bot.utils.order_labels import format_client_order_button
+        from app.models import ServiceOrderStatus
+        from app.services.client_orders_service import (
+            compute_client_orders_hub_counts,
+            sort_active_client_orders,
+            sort_history_client_orders,
+            split_client_orders,
+        )
+
+        def _order(oid, status, created_at, details=None, service_id=1):
+            return SimpleNamespace(
+                id=oid,
+                status=status,
+                created_at=created_at,
+                details=details,
+                service_id=service_id,
+            )
+
+        now = datetime(2026, 6, 20, 12, 0, 0)
+        orders = [
+            _order(1, ServiceOrderStatus.NEW.value, now, "запись клиентов"),
+            _order(2, ServiceOrderStatus.ACCEPTED.value, now.replace(day=21), "лендинг для курса"),
+            _order(3, ServiceOrderStatus.IN_PROGRESS.value, now.replace(day=22)),
+            _order(4, ServiceOrderStatus.COMPLETED.value, now.replace(day=19)),
+            _order(5, ServiceOrderStatus.CANCELLED.value, now.replace(day=18)),
+            _order(6, ServiceOrderStatus.DECLINED.value, now.replace(day=17)),
+        ]
+        active, history = split_client_orders(orders)
+        counts = compute_client_orders_hub_counts(orders)
+        if len(active) != 3 or len(history) != 3:
+            raise AssertionError("test B/C — active/history split mismatch")
+        if {o.status for o in active} != {
+            ServiceOrderStatus.NEW.value,
+            ServiceOrderStatus.ACCEPTED.value,
+            ServiceOrderStatus.IN_PROGRESS.value,
+        }:
+            raise AssertionError("test B — active statuses mismatch")
+        if {o.status for o in history} != {
+            ServiceOrderStatus.COMPLETED.value,
+            ServiceOrderStatus.CANCELLED.value,
+            ServiceOrderStatus.DECLINED.value,
+        }:
+            raise AssertionError("test C — history statuses mismatch")
+
+        hub_callbacks = [
+            btn.callback_data for row in client_orders_hub_kb(counts, "ru").inline_keyboard for btn in row
+        ]
+        hub_texts = [btn.text for row in client_orders_hub_kb(counts, "ru").inline_keyboard for btn in row]
+        if "myord:active" not in hub_callbacks or "myord:history" not in hub_callbacks:
+            raise AssertionError("test A — my orders hub missing section buttons")
+        if any(cb.startswith("myord:view:") for cb in hub_callbacks):
+            raise AssertionError("test A — hub must not list individual orders")
+        if t("ru", "my_orders_active_button", count="3") not in hub_texts:
+            raise AssertionError("test A — hub missing active button")
+        if t("ru", "my_orders_history_button", count="3") not in hub_texts:
+            raise AssertionError("test A — hub missing history button")
+
+        sorted_active = sort_active_client_orders(active)
+        if [o.id for o in sorted_active] != [1, 2, 3]:
+            raise AssertionError(f"test B — active sort order mismatch: {[o.id for o in sorted_active]}")
+        sorted_history = sort_history_client_orders(history)
+        if [o.id for o in sorted_history] != [4, 5, 6]:
+            raise AssertionError("test C — history sort order mismatch")
+
+        names = {1: "Order a bot", 2: "Сайт"}
+        active_label = format_client_order_button(orders[0], "ru", service_name=names[1])
+        if active_label != "🆕 20.06 · Order a bot · запись клиентов":
+            raise AssertionError(f"test D — active row label mismatch: {active_label!r}")
+        if "#1" in active_label:
+            raise AssertionError("test D — row label must not show order id")
+
+        active_kb = client_orders_active_kb(sorted_active, "ru", service_names=names)
+        history_kb = client_orders_history_kb(sorted_history, "ru", service_names=names)
+        active_view = [
+            btn.callback_data for row in active_kb.inline_keyboard for btn in row if btn.callback_data.startswith("myord:view:")
+        ]
+        history_view = [
+            btn.callback_data for row in history_kb.inline_keyboard for btn in row if btn.callback_data.startswith("myord:view:")
+        ]
+        if active_view != ["myord:view:1:active", "myord:view:2:active", "myord:view:3:active"]:
+            raise AssertionError(f"test E — active view callbacks mismatch: {active_view}")
+        if history_view[0] != "myord:view:4:history":
+            raise AssertionError("test E — history view callbacks must include section")
+
+        print("OK: client my orders hub and sections")
+    except Exception as exc:
+        print(f"FAIL: client my orders hub — {exc}")
         return 1
 
     try:

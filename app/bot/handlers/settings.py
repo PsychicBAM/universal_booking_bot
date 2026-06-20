@@ -36,7 +36,7 @@ from app.services.language_service import effective_lang, save_enabled_languages
 from app.bot.states import AdminSettingsStates
 from app.config import get_settings
 from app.database.session import async_session_factory
-from app.bot.utils.menu_helpers import menu_mode_kwargs
+from app.bot.utils.menu_helpers import menu_mode_kwargs, show_admin_panel
 from app.repositories import ClientRepository, SettingsRepository
 
 router = Router()
@@ -86,9 +86,7 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
     if data == "set:back:admin":
         await state.clear()
         await callback.message.delete()
-        async with async_session_factory() as session:
-            kwargs = await menu_mode_kwargs(session)
-        await callback.message.answer(t(lang, "admin_panel"), reply_markup=admin_menu(lang, **kwargs))
+        await show_admin_panel(callback.message, lang)
         await safe_callback_answer(callback)
         return
 
@@ -293,7 +291,7 @@ async def settings_callbacks(callback: CallbackQuery, state: FSMContext, is_admi
             await ClientRepository(session).set_language(callback.from_user.id, new_lang)
             await session.commit()
         await safe_callback_answer(callback)
-        await callback.message.answer(t(new_lang, "language_set"), reply_markup=admin_menu(new_lang))
+        await show_admin_panel(callback.message, new_lang)
         await edit_to_settings_main(callback, new_lang)
         return
 

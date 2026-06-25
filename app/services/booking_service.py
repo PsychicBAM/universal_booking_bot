@@ -17,7 +17,7 @@ from app.repositories import (
 )
 from app.services.availability_service import AvailabilityService
 from app.services.booking_lock import booking_lock_manager
-from app.services.calendar_service import CalendarService
+from app.services.calendar_service import CalendarService, log_calendar_failure
 from app.services.exceptions import SlotUnavailableError
 from app.bot.i18n import t
 from app.utils.datetime_utils import normalize_slot, now_local, to_local_naive
@@ -354,16 +354,13 @@ class BookingService:
                 booking.google_event_id = event_id
                 await self.session.commit()
                 logger.info("Google Calendar sync success: booking_id=%s event_id=%s", booking.id, event_id)
-            else:
+            elif not CalendarService.is_auth_failed():
                 logger.warning(
                     "Google Calendar sync failed, but booking was saved: booking_id=%s",
                     booking.id,
                 )
-        except Exception:
-            logger.exception(
-                "Google Calendar sync failed, but booking was saved: booking_id=%s",
-                booking.id,
-            )
+        except Exception as exc:
+            log_calendar_failure(logger, "sync", exc, booking_id=booking.id)
 
     async def update_calendar_for_booking(self, booking: Booking) -> None:
         if not await self.calendar_service.is_enabled():
@@ -384,17 +381,14 @@ class BookingService:
                     await self.session.commit()
             elif booking.status == BookingStatus.CONFIRMED:
                 await self.sync_calendar_for_booking(booking)
-        except Exception:
-            logger.exception(
-                "Google Calendar update failed, but booking was saved: booking_id=%s",
-                booking.id,
-            )
+        except Exception as exc:
+            log_calendar_failure(logger, "update", exc, booking_id=booking.id)
 
     async def delete_calendar_event(self, event_id: str) -> None:
         try:
             await self.calendar_service.delete_event(event_id)
-        except Exception:
-            logger.exception("Google Calendar delete failed for event_id=%s", event_id)
+        except Exception as exc:
+            log_calendar_failure(logger, "delete", exc)
 
     async def reschedule_booking(
         self,

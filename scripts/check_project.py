@@ -1249,19 +1249,33 @@ def main() -> int:
         class _FakeRefreshError(Exception):
             pass
 
+        import logging
+
         import app.services.calendar_service as calendar_service_module
+        from app.services.calendar_service import (
+            CalendarService,
+            log_calendar_failure,
+            mark_calendar_auth_failed,
+        )
 
         calendar_service_module._calendar_auth_failed = False
         calendar_service_module._calendar_auth_warned = False
+        calendar_service_module._calendar_auth_admin_notify_pending = False
         with patch.dict("sys.modules", {"google.auth.exceptions": SimpleNamespace(RefreshError=_FakeRefreshError)}):
             exc = _FakeRefreshError("invalid_grant: Token has been expired or revoked.")
             if not CalendarService._is_refresh_token_error(exc):
                 print("FAIL: test J — RefreshError invalid_grant must be detected")
                 return 1
-            CalendarService._mark_auth_failed("event create")
+            mark_calendar_auth_failed("event create")
             if not CalendarService.is_auth_failed():
                 print("FAIL: test J — calendar auth failed flag must be set")
                 return 1
+            test_logger = logging.getLogger("check_project.calendar_test")
+            with patch.object(test_logger, "exception") as mock_exception:
+                log_calendar_failure(test_logger, "sync", exc, booking_id=45)
+                if mock_exception.called:
+                    print("FAIL: test J — RefreshError must not log traceback")
+                    return 1
             service = CalendarService(AsyncMock())
             service._log_api_error("event create", exc)
             if not CalendarService.is_auth_failed():

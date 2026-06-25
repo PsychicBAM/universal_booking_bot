@@ -178,7 +178,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "client_callback_invalid": "This clients screen is outdated. Open Clients again.",
         "booking_back_context_invalid": "This screen is outdated. Open the section again.",
         "calendar_auth_expired_admin_hint": (
-            "Google Calendar needs re-authorization. The booking was saved, but no calendar event was added."
+            "Google Calendar needs re-authorization or GOOGLE_CALENDAR_ENABLED=false. "
+            "The booking was saved, but no calendar event was added."
         ),
         "clients_list_new": "🆕 {name} — {count} booking(s)",
         "clients_list_returning": "🔁 {name} — {count} bookings, next {date}",
@@ -1446,7 +1447,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "client_callback_invalid": "Раздел клиентов устарел. Откройте Клиенты заново.",
         "booking_back_context_invalid": "Экран устарел. Откройте раздел заново.",
         "calendar_auth_expired_admin_hint": (
-            "Google Calendar требует повторной авторизации. Запись сохранена, но событие в календарь не добавлено."
+            "Google Calendar требует повторной авторизации или GOOGLE_CALENDAR_ENABLED=false. "
+            "Запись сохранена, но событие в календарь не добавлено."
         ),
         "clients_list_new": "🆕 {name} — {count} запись(ей)",
         "clients_list_returning": "🔁 {name} — {count} записей, след. {date}",

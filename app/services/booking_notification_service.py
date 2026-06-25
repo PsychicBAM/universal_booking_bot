@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -113,6 +114,30 @@ async def notify_admins_booking_rescheduled(
         )
 
     await _notify_admins(bot, build_text)
+
+
+async def notify_admins_calendar_auth_expired(bot: Bot) -> None:
+    from app.bot.i18n import t
+    from app.services.calendar_service import consume_calendar_auth_admin_notify_pending
+
+    if not consume_calendar_auth_admin_notify_pending():
+        return
+
+    async def build_text(lang: str) -> str:
+        return t(lang, "calendar_auth_expired_admin_hint")
+
+    await _notify_admins(bot, build_text)
+
+
+def schedule_calendar_auth_admin_notify(bot: Bot) -> None:
+    """Notify admins once if background calendar sync hit an expired token."""
+    from app.utils.background_tasks import schedule_background_task
+
+    async def _delayed_notify() -> None:
+        await asyncio.sleep(2)
+        await notify_admins_calendar_auth_expired(bot)
+
+    schedule_background_task(_delayed_notify(), "calendar_auth_admin_notify")
 
 
 async def notify_client_booking_cancelled_by_admin(

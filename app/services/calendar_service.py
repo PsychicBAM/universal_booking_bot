@@ -16,6 +16,68 @@ logger = logging.getLogger(__name__)
 _busy_ranges_cache: dict[tuple[str, str, str], tuple[float, list[tuple[datetime, datetime]]]] = {}
 _calendar_auth_failed = False
 _calendar_auth_warned = False
+_calendar_auth_admin_notify_pending = False
+
+CALENDAR_AUTH_LOG_MESSAGE = (
+    "Google Calendar token expired or revoked. "
+    "Re-authorize Google Calendar or set GOOGLE_CALENDAR_ENABLED=false. "
+    "Booking remains saved."
+)
+
+
+def is_refresh_token_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    if "invalid_grant" in message:
+        return True
+    try:
+        from google.auth.exceptions import RefreshError
+
+        if isinstance(exc, RefreshError):
+            return any(token in message for token in ("invalid_grant", "expired", "revoked"))
+    except ImportError:
+        pass
+    if "refresherror" in type(exc).__name__.lower():
+        return any(token in message for token in ("invalid_grant", "expired", "revoked"))
+    return False
+
+
+def mark_calendar_auth_failed(action: str = "") -> None:
+    global _calendar_auth_failed, _calendar_auth_warned, _calendar_auth_admin_notify_pending
+    _calendar_auth_failed = True
+    _calendar_auth_admin_notify_pending = True
+    if not _calendar_auth_warned:
+        _calendar_auth_warned = True
+        logger.warning(CALENDAR_AUTH_LOG_MESSAGE)
+    elif action:
+        logger.debug(
+            "Google Calendar skipped for this runtime due to expired/revoked token (%s)",
+            action,
+        )
+
+
+def consume_calendar_auth_admin_notify_pending() -> bool:
+    global _calendar_auth_admin_notify_pending
+    if not _calendar_auth_admin_notify_pending:
+        return False
+    _calendar_auth_admin_notify_pending = False
+    return True
+
+
+def log_calendar_failure(
+    log: logging.Logger,
+    action: str,
+    exc: Exception,
+    *,
+    booking_id: int | None = None,
+) -> None:
+    if _calendar_auth_failed:
+        log.debug("Google Calendar %s skipped: auth disabled for runtime", action)
+        return
+    if is_refresh_token_error(exc):
+        mark_calendar_auth_failed(action)
+        return
+    suffix = f" booking_id={booking_id}" if booking_id is not None else ""
+    log.exception("Google Calendar %s failed, but booking was saved:%s", action, suffix)
 
 
 @dataclass(frozen=True)
@@ -47,32 +109,11 @@ class CalendarService:
 
     @staticmethod
     def _is_refresh_token_error(exc: Exception) -> bool:
-        try:
-            from google.auth.exceptions import RefreshError
-
-            if isinstance(exc, RefreshError):
-                message = str(exc).lower()
-                return any(token in message for token in ("invalid_grant", "expired", "revoked"))
-        except ImportError:
-            pass
-        return False
+        return is_refresh_token_error(exc)
 
     @staticmethod
     def _mark_auth_failed(action: str) -> None:
-        global _calendar_auth_failed, _calendar_auth_warned
-        _calendar_auth_failed = True
-        if not _calendar_auth_warned:
-            _calendar_auth_warned = True
-            logger.warning(
-                "Google Calendar token expired or revoked. "
-                "Re-authorize Google Calendar or disable GOOGLE_CALENDAR_ENABLED. "
-                "Booking remains saved."
-            )
-        else:
-            logger.debug(
-                "Google Calendar disabled for this runtime due to expired/revoked token (%s)",
-                action,
-            )
+        mark_calendar_auth_failed(action)
 
     @property
     def env_enabled(self) -> bool:
@@ -183,10 +224,7 @@ class CalendarService:
             if isinstance(exc, HttpError):
                 status = exc.resp.status if exc.resp else "?"
                 if status == 401:
-                    logger.error(
-                        "Google Calendar %s failed: invalid or expired refresh token (401)",
-                        action,
-                    )
+                    self._mark_auth_failed(action)
                     return
                 if status == 403:
                     logger.error(
@@ -533,6 +571,7 @@ class CalendarService:
 
                 if isinstance(exc, HttpError) and exc.resp:
                     if exc.resp.status == 401:
+                        self._mark_auth_failed("connection test")
                         return CalendarTestResult(
                             ok=False,
                             message_key="calendar_test_invalid_token",

@@ -1146,6 +1146,9 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, is_admin: 
     t_ui = time.perf_counter() - t0
     t0 = time.perf_counter()
     await _notify_admins_new_booking(callback.bot, booking, service, lang)
+    from app.services.booking_notification_service import schedule_calendar_auth_admin_notify
+
+    schedule_calendar_auth_admin_notify(callback.bot)
     t_notify = time.perf_counter() - t0
     log_action_timing(
         "booking confirm",

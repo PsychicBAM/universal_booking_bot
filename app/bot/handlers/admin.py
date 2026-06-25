@@ -41,7 +41,10 @@ from app.repositories import (
     SettingsRepository,
 )
 from app.services.booking_service import BookingService
-from app.services.booking_notification_service import notify_client_booking_cancelled_by_admin
+from app.services.booking_notification_service import (
+    notify_client_booking_cancelled_by_admin,
+    schedule_calendar_auth_admin_notify,
+)
 from app.services.language_service import get_user_language
 from app.services.service_media_service import build_admin_service_detail
 from app.services.service_modes_service import default_service_type_for_modes, load_service_modes
@@ -870,6 +873,7 @@ async def admin_confirm_booking(callback: CallbackQuery, is_admin: bool, lang: s
             t_notify = time.perf_counter() - t0
         except Exception:
             pass
+    schedule_calendar_auth_admin_notify(callback.bot)
     log_action_timing(
         "admin confirm booking",
         booking_id=booking_id,

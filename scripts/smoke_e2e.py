@@ -58,6 +58,7 @@ def check_label_builders() -> None:
         duration_minutes=30,
         buffer_after_minutes=0,
         price=0,
+        service_type="booking",
     )
 
     client_label = format_client_booking_button(booking, "en", service_name="Lesson")

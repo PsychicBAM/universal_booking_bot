@@ -470,6 +470,94 @@ def main() -> int:
             print("FAIL: test G — confirmation yes button callback")
             return 1
 
+        from app.bot.handlers.admin_clients import (
+            _parse_list_callback,
+            _parse_section_callback,
+            _parse_view_callback,
+        )
+        from app.bot.keyboards.admin_clients_kb import (
+            _list_cb,
+            _section_cb,
+            _view_cb,
+            admin_clients_list_kb,
+        )
+
+        # Test A — legacy adm_cli:all and list callbacks do not raise
+        legacy_all = _parse_list_callback("adm_cli:all")
+        if legacy_all is None or legacy_all != ("all", 0):
+            print("FAIL: test A — adm_cli:all must parse as filter=all page=0")
+            return 1
+        if _parse_section_callback("adm_cli:all") is not None:
+            print("FAIL: test A — adm_cli:all is not a section callback")
+            return 1
+
+        # Test B — filter token "all" must not be parsed as client_id
+        section_parsed = _parse_section_callback("adm_cli:hist:123:all:0:0")
+        if section_parsed is None:
+            print("FAIL: test B — hist section with filter all must parse")
+            return 1
+        _section, client_id_b, filter_b, _page_b, _sp_b = section_parsed
+        if client_id_b != 123 or filter_b != "all":
+            print("FAIL: test B — section parser must keep all as filter_key, not client_id")
+            return 1
+
+        # Test C — view callback returns client_id
+        client_id_c, filter_c, page_c = _parse_view_callback("adm_cli:view:123:all:0")
+        if client_id_c != 123 or filter_c != "all" or page_c != 0:
+            print("FAIL: test C — adm_cli:view:123 must return client_id=123")
+            return 1
+
+        # Test D — malformed view with non-numeric id does not crash
+        bad_view = _parse_view_callback("adm_cli:view:all:all:0")
+        if bad_view[0] is not None:
+            print("FAIL: test D — adm_cli:view:all must return client_id=None")
+            return 1
+        bad_section = _parse_section_callback("adm_cli:hist:all:all:0:0")
+        if bad_section is None or bad_section[1] is not None:
+            print("FAIL: test D — adm_cli:hist:all must return client_id=None without crash")
+            return 1
+
+        # Test E — hub buttons parse successfully
+        hub_callbacks = {btn.callback_data for row in main_kb.inline_keyboard for btn in row}
+        for cb in hub_callbacks:
+            if cb.startswith("adm_cli:list:") or cb == "adm_cli:all":
+                if _parse_list_callback(cb) is None:
+                    print(f"FAIL: test E — hub list callback must parse: {cb!r}")
+                    return 1
+            elif cb in ("adm_cli:search", "adm_cli:admin_back", "adm_cli:menu"):
+                continue
+            else:
+                print(f"FAIL: test E — unexpected hub callback: {cb!r}")
+                return 1
+
+        # Test F — list row and section callbacks parse successfully
+        list_cb = _list_cb("all", 0)
+        if _parse_list_callback(list_cb) != ("all", 0):
+            print("FAIL: test F — list page callback must parse")
+            return 1
+        view_cb = _view_cb(42, "all", 0)
+        if _parse_view_callback(view_cb)[0] != 42:
+            print("FAIL: test F — client row view callback must parse")
+            return 1
+        future_cb = _section_cb("future", 42, "all", 0, 0)
+        future_parsed = _parse_section_callback(future_cb)
+        if future_parsed is None or future_parsed[1] != 42:
+            print("FAIL: test F — future section callback must parse client_id")
+            return 1
+        hist_cb = _section_cb("hist", 42, "upcoming", 1, 2)
+        hist_parsed = _parse_section_callback(hist_cb)
+        if hist_parsed is None or hist_parsed != ("hist", 42, "upcoming", 1, 2):
+            print("FAIL: test F — hist section callback must parse all tokens")
+            return 1
+        empty_list_kb = admin_clients_list_kb([], "all", 0, 1, lang="en")
+        for row in empty_list_kb.inline_keyboard:
+            for btn in row:
+                cb = btn.callback_data or ""
+                if cb.startswith("adm_cli:list:"):
+                    if _parse_list_callback(cb) is None:
+                        print(f"FAIL: test F — list nav callback must parse: {cb!r}")
+                        return 1
+
         print("OK: admin clients archive filters and UI")
 
         from app.bot.i18n import t
@@ -734,7 +822,7 @@ def main() -> int:
     try:
         from datetime import datetime, timedelta
         from types import SimpleNamespace
-        from unittest.mock import patch
+        from unittest.mock import AsyncMock, patch
 
         from app.bot.keyboards.admin_bookings_kb import (
             admin_bookings_folder_kb,
@@ -1036,6 +1124,150 @@ def main() -> int:
             print("FAIL: test I — active folder must show needs-change icon rows")
             return 1
 
+        from app.bot.keyboards.admin_bookings_kb import admin_booking_detail_kb
+        from app.bot.keyboards.booking_edit_kb import client_booking_detail_kb
+        from app.bot.keyboards.orders_kb import admin_order_detail_kb
+        from app.models import ServiceOrderStatus
+        from app.services.admin_bookings_service import (
+            BookingDetailSource,
+            booking_detail_back_callback,
+            build_booking_view_callback,
+            parse_booking_detail_source,
+        )
+        from app.services.calendar_service import CalendarService
+
+        bookings_source = BookingDetailSource(section="pending_admin", page=0)
+        bookings_view_cb = build_booking_view_callback(26, bookings_source)
+        if booking_detail_back_callback(bookings_source) != "adm_book:list:pending_admin:0":
+            print("FAIL: test A — bookings source back must return same section")
+            return 1
+        parsed_id, parsed_source = parse_booking_detail_source(bookings_view_cb)
+        if parsed_id != 26 or parsed_source.section != "pending_admin":
+            print("FAIL: test A — bookings view callback must preserve section")
+            return 1
+
+        client_source = BookingDetailSource(
+            origin="client",
+            client_id=5,
+            client_tab="hist",
+            client_filter="all",
+            page=0,
+            client_section_page=1,
+        )
+        client_view_cb = build_booking_view_callback(42, client_source)
+        if booking_detail_back_callback(client_source) != "adm_cli:hist:5:all:0:1":
+            print("FAIL: test B — client history back must return client history section")
+            return 1
+        if "adm_book:list:active" in booking_detail_back_callback(client_source):
+            print("FAIL: test B — client history back must not route to active bookings")
+            return 1
+        _, client_parsed = parse_booking_detail_source(client_view_cb)
+        if client_parsed.origin != "client" or client_parsed.client_tab != "hist":
+            print("FAIL: test B — client history view callback parse")
+            return 1
+
+        future_source = BookingDetailSource(
+            origin="client",
+            client_id=5,
+            client_tab="future",
+            client_filter="all",
+            page=0,
+            client_section_page=0,
+        )
+        if booking_detail_back_callback(future_source) != "adm_cli:future:5:all:0:0":
+            print("FAIL: test C — client future back must return future section")
+            return 1
+
+        with patch("app.services.admin_bookings_service.now_local", return_value=fixed_now):
+            cancelled_kb = admin_booking_detail_kb(booking_cancelled, bookings_source, lang="ru")
+            past_kb = admin_booking_detail_kb(booking_past, bookings_source, lang="ru")
+            pending_kb = admin_booking_detail_kb(booking, bookings_source, lang="ru")
+            confirmed_kb = admin_booking_detail_kb(
+                booking_confirmed,
+                bookings_source,
+                lang="ru",
+                show_send_confirmation=True,
+            )
+        cancelled_callbacks = [btn.callback_data for row in cancelled_kb.inline_keyboard for btn in row]
+        for forbidden in ("adm_confirm:", "adm_cancel:", "adm_att:send:"):
+            if any(cb and cb.startswith(forbidden) for cb in cancelled_callbacks):
+                print(f"FAIL: test D — cancelled booking must not include {forbidden}")
+                return 1
+
+        past_callbacks = [btn.callback_data for row in past_kb.inline_keyboard for btn in row]
+        if any(cb and cb.startswith("adm_confirm:") for cb in past_callbacks):
+            print("FAIL: test E — past booking must not include confirm")
+            return 1
+        if any(cb and cb.startswith("adm_cancel:") for cb in past_callbacks):
+            print("FAIL: test E — past booking must not include cancel")
+            return 1
+
+        pending_callbacks = [btn.callback_data for row in pending_kb.inline_keyboard for btn in row]
+        if not any(cb and cb.startswith("adm_confirm:") for cb in pending_callbacks):
+            print("FAIL: test F — pending future booking must include confirm")
+            return 1
+        if not any(cb and cb.startswith("adm_cancel:") for cb in pending_callbacks):
+            print("FAIL: test F — pending future booking must include cancel")
+            return 1
+
+        confirmed_callbacks = [btn.callback_data for row in confirmed_kb.inline_keyboard for btn in row]
+        if not any(cb and cb.startswith("adm_cancel:") for cb in confirmed_callbacks):
+            print("FAIL: test G — confirmed future booking must include cancel")
+            return 1
+        if not any(cb and cb.startswith("adm_att:send:") for cb in confirmed_callbacks):
+            print("FAIL: test G — confirmed future booking must include send question")
+            return 1
+
+        client_past_kb = client_booking_detail_kb(
+            booking_past.id,
+            lang="ru",
+            can_reschedule=False,
+            can_cancel=False,
+            can_change_location=False,
+            can_change_address=False,
+            can_change_comment=False,
+        )
+        client_past_callbacks = [btn.callback_data for row in client_past_kb.inline_keyboard for btn in row]
+        for forbidden in ("my:res:", "my:cancel:", "my:loc:", "my:addr:", "my:comment:"):
+            if any(cb and cb.startswith(forbidden) for cb in client_past_callbacks):
+                print(f"FAIL: test H — past/cancelled client booking must not include {forbidden}")
+                return 1
+
+        closed_order_kb = admin_order_detail_kb(
+            1,
+            ServiceOrderStatus.CANCELLED.value,
+            "cancelled",
+            0,
+            "ru",
+        )
+        closed_callbacks = [btn.callback_data for row in closed_order_kb.inline_keyboard for btn in row]
+        for forbidden in ("ord:accept:", "ord:decline:", "ord:status:in_progress:", "ord:status:completed:", "ord:status:cancelled:"):
+            if any(cb and cb.startswith(forbidden) for cb in closed_callbacks):
+                print(f"FAIL: test I — closed order must not include {forbidden}")
+                return 1
+
+        class _FakeRefreshError(Exception):
+            pass
+
+        import app.services.calendar_service as calendar_service_module
+
+        calendar_service_module._calendar_auth_failed = False
+        calendar_service_module._calendar_auth_warned = False
+        with patch.dict("sys.modules", {"google.auth.exceptions": SimpleNamespace(RefreshError=_FakeRefreshError)}):
+            exc = _FakeRefreshError("invalid_grant: Token has been expired or revoked.")
+            if not CalendarService._is_refresh_token_error(exc):
+                print("FAIL: test J — RefreshError invalid_grant must be detected")
+                return 1
+            CalendarService._mark_auth_failed("event create")
+            if not CalendarService.is_auth_failed():
+                print("FAIL: test J — calendar auth failed flag must be set")
+                return 1
+            service = CalendarService(AsyncMock())
+            service._log_api_error("event create", exc)
+            if not CalendarService.is_auth_failed():
+                print("FAIL: test J — _log_api_error must mark auth failed on RefreshError")
+                return 1
+
         from app.bot.keyboards.orders_kb import admin_orders_hub_kb
 
         orders_hub_callbacks = [
@@ -1150,6 +1382,7 @@ def main() -> int:
             price=500,
             duration_minutes=15,
             buffer_after_minutes=0,
+            service_type="booking",
         )
         service_text = format_service(service, "ru")
         if "<b>" in service_text or "</b>" in service_text:
@@ -1941,6 +2174,78 @@ def main() -> int:
         print("OK: client my orders hub and sections")
     except Exception as exc:
         print(f"FAIL: client my orders hub — {exc}")
+        return 1
+
+    try:
+        from types import SimpleNamespace
+
+        from app.bot.i18n import t
+        from app.bot.keyboards import admin_service_detail_kb
+        from app.models import SERVICE_TYPE_BOOKING, SERVICE_TYPE_ORDER
+        from app.utils.formatting import format_service, format_service_admin
+
+        def _service(svc_type: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                name="Telegram bot" if svc_type == SERVICE_TYPE_ORDER else "Lesson",
+                description="Build a bot",
+                price=5000,
+                duration_minutes=60,
+                buffer_after_minutes=0,
+                is_active=True,
+                requires_location=False,
+                ask_client_comment=False,
+                show_media_to_clients=True,
+                service_type=svc_type,
+            )
+
+        booking = _service(SERVICE_TYPE_BOOKING)
+        order = _service(SERVICE_TYPE_ORDER)
+        booking_admin = format_service_admin(booking, "ru", photos_count=0, videos_count=0, locations_count=0)
+        order_admin = format_service_admin(order, "ru", photos_count=0, videos_count=0, locations_count=0)
+        for label in ("Длительность", "Буфер", "Адрес клиента", "Комментарий клиента", "Места проведения"):
+            if label not in booking_admin:
+                raise AssertionError(f"test A — booking admin detail missing {label}")
+            if label in order_admin:
+                raise AssertionError(f"test B — order admin detail must not include {label}")
+        for label in ("Duration", "Buffer", "Client address", "Client comment", "Locations"):
+            order_en = format_service_admin(order, "en", photos_count=0, videos_count=0, locations_count=0)
+            if label in order_en:
+                raise AssertionError(f"test B — order EN admin detail must not include {label}")
+        if "Заявка без даты и времени" not in order_admin:
+            raise AssertionError("test B — order admin detail missing no-time type label")
+
+        booking_kb = {
+            btn.callback_data
+            for row in admin_service_detail_kb(1, True, "ru", is_order_type=False).inline_keyboard
+            for btn in row
+        }
+        order_kb = {
+            btn.callback_data
+            for row in admin_service_detail_kb(2, True, "ru", is_order_type=True).inline_keyboard
+            for btn in row
+        }
+        if "adm_svc_edit:dur:1" not in booking_kb:
+            raise AssertionError("test D — booking detail must include duration button")
+        if "adm_svc_edit:buf:1" not in booking_kb:
+            raise AssertionError("test D — booking detail must include buffer button")
+        if "adm_svc_loc:1" not in booking_kb:
+            raise AssertionError("test D — booking detail must include location button")
+        for forbidden in ("adm_svc_edit:dur:2", "adm_svc_edit:buf:2", "adm_svc_loc:2", "adm_svc_comment:2"):
+            if forbidden in order_kb:
+                raise AssertionError(f"test C — order detail must not include {forbidden}")
+
+        booking_client = format_service(booking, "ru")
+        order_client = format_service(order, "ru")
+        if "Длительность" not in booking_client:
+            raise AssertionError("test F — booking client card must show duration")
+        if "Длительность" in order_client:
+            raise AssertionError("test E — order client card must not show duration")
+        if "📝 Telegram bot" not in order_client:
+            raise AssertionError("test E — order client card must use order icon")
+
+        print("OK: order service hides booking-only fields")
+    except Exception as exc:
+        print(f"FAIL: order service field visibility — {exc}")
         return 1
 
     try:

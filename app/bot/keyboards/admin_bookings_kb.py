@@ -3,6 +3,11 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from app.bot.i18n import t
 from app.models import Booking
 from app.services.admin_bookings_service import (
+    BookingDetailSource,
+    booking_detail_action_flags,
+    booking_detail_back_callback,
+    build_booking_view_callback,
+    encode_attendance_back,
     format_folder_booking_button,
     normalize_bookings_section,
 )
@@ -20,7 +25,10 @@ def _list_cb(section: str, page: int) -> str:
 
 
 def _view_cb(booking_id: int, section: str, page: int) -> str:
-    return f"adm_book:view:{booking_id}:from:{normalize_bookings_section(section)}:{page}"
+    return build_booking_view_callback(
+        booking_id,
+        BookingDetailSource(section=normalize_bookings_section(section), page=page),
+    )
 
 
 def admin_bookings_hub_kb(lang: str = "ru") -> InlineKeyboardMarkup:
@@ -87,37 +95,37 @@ def admin_bookings_folder_kb(
 
 
 def admin_booking_detail_kb(
-    booking_id: int,
-    status: str,
-    section: str,
-    page: int,
+    booking: Booking,
+    source: BookingDetailSource,
     lang: str = "ru",
     *,
     show_send_confirmation: bool = True,
 ) -> InlineKeyboardMarkup:
-    section = normalize_bookings_section(section)
-    back_cb = _list_cb(section, page)
-    back = f"from:{section}:{page}"
+    flags = booking_detail_action_flags(booking, show_send_confirmation=show_send_confirmation)
+    back_cb = booking_detail_back_callback(source)
+    back = encode_attendance_back(source)
+    booking_id = booking.id
     rows: list[list[InlineKeyboardButton]] = []
-    if status == "pending":
+    if flags["can_confirm"]:
         rows.append(
             [InlineKeyboardButton(text=t(lang, "confirm_booking_btn"), callback_data=f"adm_confirm:{booking_id}")]
         )
-    if status in ("pending", "confirmed"):
+    if flags["can_cancel"]:
         rows.append(
             [InlineKeyboardButton(text=t(lang, "cancel_booking_btn"), callback_data=f"adm_cancel:{booking_id}")]
         )
+    if flags["show_message"]:
         rows.append(
             [InlineKeyboardButton(text=t(lang, "message_client_btn"), callback_data=f"adm_msg:{booking_id}")]
         )
-        if status == "confirmed" and show_send_confirmation:
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=t(lang, "admin_attendance_send_question"),
-                        callback_data=f"adm_att:send:{booking_id}:{back}",
-                    )
-                ]
-            )
+    if flags["can_send_confirmation"]:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "admin_attendance_send_question"),
+                    callback_data=f"adm_att:send:{booking_id}:{back}",
+                )
+            ]
+        )
     rows.append([InlineKeyboardButton(text=t(lang, "back"), callback_data=back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)

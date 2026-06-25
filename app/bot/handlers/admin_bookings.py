@@ -19,11 +19,13 @@ from app.database.session import async_session_factory
 from app.models import Client
 from app.repositories import BookingRepository, ServiceRepository
 from app.services.admin_bookings_service import (
+    BookingDetailSource,
     build_bookings_folder_body,
     build_bookings_hub_body,
     load_bookings_folder,
     load_bookings_hub,
     paginate_bookings_folder,
+    parse_booking_detail_source,
     parse_bookings_list_callback,
     parse_bookings_view_callback,
     search_bookings,
@@ -92,8 +94,7 @@ async def show_booking_detail(
     callback: CallbackQuery,
     lang: str,
     booking_id: int,
-    section: str,
-    page: int,
+    source: BookingDetailSource,
 ) -> None:
     async with async_session_factory() as session:
         booking = await BookingRepository(session).get_by_id(booking_id)
@@ -108,10 +109,8 @@ async def show_booking_detail(
         callback.message,
         format_booking(booking, service, lang, admin_view=True, client_username=username),
         reply_markup=admin_booking_detail_kb(
-            booking_id,
-            booking.status.value,
-            section,
-            page,
+            booking,
+            source,
             lang,
             show_send_confirmation=show_send,
         ),
@@ -213,8 +212,11 @@ async def admin_bookings_search_query(
 async def admin_bookings_view_callback(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
-    booking_id, section, page = parse_bookings_view_callback(callback.data)
-    await show_booking_detail(callback, lang, booking_id, section, page)
+    booking_id, source = parse_bookings_view_callback(callback.data)
+    if not booking_id:
+        await safe_callback_answer(callback, t(lang, "booking_back_context_invalid"), show_alert=True)
+        return
+    await show_booking_detail(callback, lang, booking_id, source)
     await safe_callback_answer(callback)
 
 
@@ -222,6 +224,9 @@ async def admin_bookings_view_callback(callback: CallbackQuery, is_admin: bool, 
 async def admin_booking_legacy_view(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
-    booking_id = int(callback.data.split(":", 1)[1])
-    await show_booking_detail(callback, lang, booking_id, "active", 0)
+    booking_id, source = parse_booking_detail_source(callback.data)
+    if booking_id is None or source is None:
+        await safe_callback_answer(callback, t(lang, "booking_back_context_invalid"), show_alert=True)
+        return
+    await show_booking_detail(callback, lang, booking_id, source)
     await safe_callback_answer(callback)

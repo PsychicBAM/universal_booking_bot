@@ -16,6 +16,7 @@ from app.bot.keyboards.service_location_kb import (
 )
 from app.bot.states import AdminServiceLocationStates
 from app.database.session import async_session_factory
+from app.models import SERVICE_TYPE_ORDER
 from app.repositories import ServiceLocationRepository, ServiceRepository
 from app.services.service_media_service import build_admin_service_detail
 
@@ -46,6 +47,13 @@ async def show_locations_list(event: Message | CallbackQuery, service_id: int, l
     async with async_session_factory() as session:
         service = await ServiceRepository(session).get_by_id(service_id)
         if not service:
+            text = t(lang, "not_found")
+            if isinstance(event, CallbackQuery):
+                await safe_callback_answer(event, text, show_alert=True)
+            else:
+                await event.answer(text)
+            return
+        if service.service_type == SERVICE_TYPE_ORDER:
             text = t(lang, "not_found")
             if isinstance(event, CallbackQuery):
                 await safe_callback_answer(event, text, show_alert=True)

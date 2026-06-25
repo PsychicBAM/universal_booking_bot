@@ -59,8 +59,8 @@ async def admin_attendance_view(callback: CallbackQuery, is_admin: bool, lang: s
         await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
         return
     booking_id, back = _parse_view_callback(callback.data)
-    section, page = parse_attendance_back(back)
-    await show_booking_detail(callback, lang, booking_id, section, page)
+    source = parse_attendance_back(back)
+    await show_booking_detail(callback, lang, booking_id, source)
     await safe_callback_answer(callback)
 
 
@@ -127,5 +127,5 @@ async def _do_send_question(
         await session.commit()
 
     await callback.message.answer(t(lang, "admin_attendance_sent"))
-    section, page = parse_attendance_back(back)
-    await show_booking_detail(callback, lang, booking_id, section, page)
+    source = parse_attendance_back(back)
+    await show_booking_detail(callback, lang, booking_id, source)

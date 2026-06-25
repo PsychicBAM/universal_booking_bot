@@ -37,30 +37,89 @@ from app.services.client_history_service import (
 router = Router()
 logger = logging.getLogger(__name__)
 
+# adm_cli callback patterns (namespace adm_cli):
+#   adm_cli:admin_back
+#   adm_cli:menu
+#   adm_cli:search
+#   adm_cli:all                          — legacy list shortcut (filter=all, page=0)
+#   adm_cli:list:{filter}:{page}         — client list (filter: all|upcoming|visited|new|returning|cancelled)
+#   adm_cli:view:{client_id}:{filter}:{page}
+#   adm_cli:{future|hist}:{client_id}:{filter}:{page}[:{section_page}]
+#   adm_cli:section:{future|hist}:{client_id}:{filter}:{page}[:{section_page}]  — legacy section prefix
+#   adm_cli:msg:{client_id}:{filter}:{page}
+#   adm_cli:confirm:{client_id}:{filter}:{page}
 
-def _parse_list_callback(data: str) -> tuple[str, int]:
+
+def _safe_page_token(token: str | None) -> int:
+    return int(token) if token and token.isdigit() else 0
+
+
+def _safe_client_id_token(token: str | None) -> int | None:
+    return int(token) if token and token.isdigit() else None
+
+
+def _parse_list_callback(data: str) -> tuple[str, int] | None:
     parts = data.split(":")
-    filter_key = normalize_client_filter(parts[3] if len(parts) > 3 else DEFAULT_CLIENT_FILTER)
-    page = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
+    if len(parts) < 2 or parts[0] != "adm_cli":
+        return None
+    # Legacy shortcut: adm_cli:all
+    if len(parts) == 2 and parts[1] == "all":
+        return DEFAULT_CLIENT_FILTER, 0
+    if parts[1] != "list":
+        return None
+    filter_key = normalize_client_filter(parts[2] if len(parts) > 2 else DEFAULT_CLIENT_FILTER)
+    page = _safe_page_token(parts[3] if len(parts) > 3 else None)
     return filter_key, page
 
 
-def _parse_view_callback(data: str) -> tuple[int, str, int]:
+def _parse_view_callback(data: str) -> tuple[int | None, str, int]:
     parts = data.split(":")
-    client_id = int(parts[2])
+    if len(parts) < 3 or parts[0] != "adm_cli" or parts[1] != "view":
+        return None, DEFAULT_CLIENT_FILTER, 0
+    client_id = _safe_client_id_token(parts[2])
     filter_key = normalize_client_filter(parts[3] if len(parts) > 3 else DEFAULT_CLIENT_FILTER)
-    page = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
+    page = _safe_page_token(parts[4] if len(parts) > 4 else None)
     return client_id, filter_key, page
 
 
-def _parse_section_callback(data: str) -> tuple[str, int, str, int, int]:
+def _parse_section_callback(
+    data: str,
+) -> tuple[str, int | None, str, int, int] | None:
     parts = data.split(":")
-    section = parts[2]
-    client_id = int(parts[3])
-    filter_key = normalize_client_filter(parts[4] if len(parts) > 4 else DEFAULT_CLIENT_FILTER)
-    page = int(parts[5]) if len(parts) > 5 and parts[5].isdigit() else 0
-    section_page = int(parts[6]) if len(parts) > 6 and parts[6].isdigit() else 0
+    if len(parts) < 2 or parts[0] != "adm_cli":
+        return None
+    # Not a section callback (e.g. adm_cli:all, adm_cli:list:...)
+    if parts[1] in ("all", "list", "view", "menu", "search", "admin_back", "msg", "confirm"):
+        return None
+    if parts[1] == "section" and len(parts) >= 4:
+        section = parts[2]
+        client_token = parts[3]
+        filter_idx = 4
+        page_idx = 5
+        section_page_idx = 6
+    elif parts[1] in ("future", "hist"):
+        section = parts[1]
+        client_token = parts[2] if len(parts) > 2 else None
+        filter_idx = 3
+        page_idx = 4
+        section_page_idx = 5
+    else:
+        return None
+    if section not in ("future", "hist"):
+        return None
+    client_id = _safe_client_id_token(client_token)
+    filter_key = normalize_client_filter(
+        parts[filter_idx] if len(parts) > filter_idx else DEFAULT_CLIENT_FILTER
+    )
+    page = _safe_page_token(parts[page_idx] if len(parts) > page_idx else None)
+    section_page = _safe_page_token(parts[section_page_idx] if len(parts) > section_page_idx else None)
     return section, client_id, filter_key, page, section_page
+
+
+async def _handle_invalid_clients_callback(callback: CallbackQuery, lang: str) -> None:
+    logger.warning("Invalid admin clients callback: %s", callback.data)
+    await safe_callback_answer(callback, t(lang, "client_callback_invalid"), show_alert=True)
+    await show_clients_main(callback, lang)
 
 
 async def show_clients_main(event: CallbackQuery | Message, lang: str) -> None:
@@ -184,12 +243,16 @@ async def clients_menu_callback(callback: CallbackQuery, is_admin: bool, lang: s
     await show_clients_main(callback, lang)
 
 
-@router.callback_query(F.data.regexp(r"^adm_cli:list:"))
+@router.callback_query(F.data.regexp(r"^adm_cli:(list:|all$)"))
 async def clients_list_callback(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
         return
-    filter_key, page = _parse_list_callback(callback.data)
+    parsed = _parse_list_callback(callback.data)
+    if parsed is None:
+        await _handle_invalid_clients_callback(callback, lang)
+        return
+    filter_key, page = parsed
     await safe_callback_answer(callback)
     await show_clients_list(callback, lang, filter_key, page)
 
@@ -200,16 +263,26 @@ async def client_view_callback(callback: CallbackQuery, is_admin: bool, lang: st
         await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
         return
     client_id, filter_key, page = _parse_view_callback(callback.data)
+    if client_id is None:
+        await _handle_invalid_clients_callback(callback, lang)
+        return
     await safe_callback_answer(callback)
     await show_client_detail(callback, lang, client_id, filter_key, page)
 
 
-@router.callback_query(F.data.regexp(r"^adm_cli:(future|hist):"))
+@router.callback_query(F.data.regexp(r"^adm_cli:(future|hist|section):"))
 async def client_section_callback(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     if not is_admin:
         await safe_callback_answer(callback, t(lang, "access_denied"), show_alert=True)
         return
-    section, client_id, filter_key, page, section_page = _parse_section_callback(callback.data)
+    parsed = _parse_section_callback(callback.data)
+    if parsed is None:
+        await _handle_invalid_clients_callback(callback, lang)
+        return
+    section, client_id, filter_key, page, section_page = parsed
+    if client_id is None:
+        await _handle_invalid_clients_callback(callback, lang)
+        return
     await safe_callback_answer(callback)
     await show_client_section(callback, lang, section, client_id, filter_key, page, section_page)
 
@@ -222,6 +295,9 @@ async def client_message_callback(callback: CallbackQuery, state: FSMContext, is
     client_id, filter_key, page = _parse_view_callback(
         callback.data.replace("adm_cli:msg:", "adm_cli:view:", 1)
     )
+    if client_id is None:
+        await _handle_invalid_clients_callback(callback, lang)
+        return
     await state.update_data(
         msg_client_id=client_id,
         msg_booking_id=None,
@@ -242,6 +318,9 @@ async def client_confirm_nearest_callback(callback: CallbackQuery, is_admin: boo
     client_id, filter_key, page = _parse_view_callback(
         callback.data.replace("adm_cli:confirm:", "adm_cli:view:", 1)
     )
+    if client_id is None:
+        await _handle_invalid_clients_callback(callback, lang)
+        return
     async with async_session_factory() as session:
         history = await get_client_history(session, client_id)
         if not history or not history.future_bookings:

@@ -52,15 +52,23 @@ def _location_comment_lines(
 
 
 def format_service(service: Service, lang: str = "ru") -> str:
+    from app.models import SERVICE_TYPE_ORDER
+
     price = t(lang, "price_label", price=f"{service.price} ₽") if service.price else t(lang, "price_free")
     desc = service.description or ""
-    lines = [
-        f"📋 {service.name}",
-        t(lang, "duration_label", duration=format_duration(lang, service.duration_minutes)),
-    ]
-    if service.buffer_after_minutes:
-        lines.append(t(lang, "buffer_client_note"))
-    lines.extend([price, desc])
+    is_order = service.service_type == SERVICE_TYPE_ORDER
+    icon = "📝" if is_order else "📋"
+    lines = [f"{icon} {service.name}"]
+    if not is_order:
+        lines.append(t(lang, "duration_label", duration=format_duration(lang, service.duration_minutes)))
+        if service.buffer_after_minutes:
+            lines.append(t(lang, "buffer_client_note"))
+    lines.append(price)
+    if desc:
+        if is_order:
+            lines.append(f"{t(lang, 'order_details_label')}:\n{desc}")
+        else:
+            lines.append(desc)
     return "\n".join(line for line in lines if line).strip()
 
 
@@ -72,17 +80,32 @@ def format_service_admin(
     videos_count: int = 0,
     locations_count: int = 0,
 ) -> str:
+    from app.models import SERVICE_TYPE_ORDER
+
     active = t(lang, "yes") if service.is_active else t(lang, "no")
     price = f"{service.price} ₽" if service.price else t(lang, "price_free")
     desc = escape(service.description) if service.description else ""
+    media_status = t(lang, "media_enabled") if service.show_media_to_clients else t(lang, "media_disabled")
+    type_line = format_service_type_line(service, lang)
+
+    if service.service_type == SERVICE_TYPE_ORDER:
+        lines = [
+            f"📝 {service.name}",
+            type_line,
+            f"{t(lang, 'price_label', price=price)}",
+            f"{t(lang, 'client_media_display', status=media_status)}",
+            f"{t(lang, 'active_label', value=active)}",
+            f"{t(lang, 'photos_count', count=str(photos_count))}",
+            f"{t(lang, 'videos_count', count=str(videos_count))}",
+        ]
+        if desc:
+            lines.append(f"{t(lang, 'order_details_label')}:\n{desc}")
+        return "\n".join(lines).strip()
+
     location_status = t(lang, "label_enabled") if service.requires_location else t(lang, "label_disabled")
     comment_status = (
         t(lang, "label_enabled") if service.ask_client_comment else t(lang, "label_disabled")
     )
-    media_status = t(lang, "media_enabled") if service.show_media_to_clients else t(lang, "media_disabled")
-    from app.utils.formatting import format_service_type_line
-
-    type_line = format_service_type_line(service, lang)
     return (
         f"📋 {service.name}\n"
         f"{type_line}\n"

@@ -615,6 +615,9 @@ async def admin_service_toggle_location(callback: CallbackQuery, is_admin: bool,
         if not service:
             await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
             return
+        if service.service_type == SERVICE_TYPE_ORDER:
+            await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+            return
         service.requires_location = not service.requires_location
         await session.commit()
         text, kb = await build_admin_service_detail(session, service, lang)
@@ -632,6 +635,9 @@ async def admin_service_toggle_comment(callback: CallbackQuery, is_admin: bool, 
         service = await ServiceRepository(session).get_by_id(service_id)
         if not service:
             await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
+            return
+        if service.service_type == SERVICE_TYPE_ORDER:
+            await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
             return
         service.ask_client_comment = not service.ask_client_comment
         await session.commit()
@@ -770,6 +776,14 @@ async def admin_service_edit(callback: CallbackQuery, state: FSMContext, is_admi
         return
     _, field, sid = callback.data.split(":")
     service_id = int(sid)
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+        if not service:
+            await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
+            return
+        if field in ("dur", "buf") and service.service_type == SERVICE_TYPE_ORDER:
+            await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+            return
     await state.update_data(edit_service_id=service_id, edit_field=field, flow_origin="admin")
     if field == "dur":
         await state.set_state(AdminServiceStates.duration)

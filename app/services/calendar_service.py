@@ -14,6 +14,8 @@ from app.utils.datetime_utils import now_local, to_aware_local, to_local_naive
 logger = logging.getLogger(__name__)
 
 _busy_ranges_cache: dict[tuple[str, str, str], tuple[float, list[tuple[datetime, datetime]]]] = {}
+_calendar_auth_failed = False
+_calendar_auth_warned = False
 
 
 @dataclass(frozen=True)
@@ -39,12 +41,47 @@ class CalendarService:
         self.settings = get_settings()
         self.settings_repo = SettingsRepository(session)
 
+    @staticmethod
+    def is_auth_failed() -> bool:
+        return _calendar_auth_failed
+
+    @staticmethod
+    def _is_refresh_token_error(exc: Exception) -> bool:
+        try:
+            from google.auth.exceptions import RefreshError
+
+            if isinstance(exc, RefreshError):
+                message = str(exc).lower()
+                return any(token in message for token in ("invalid_grant", "expired", "revoked"))
+        except ImportError:
+            pass
+        return False
+
+    @staticmethod
+    def _mark_auth_failed(action: str) -> None:
+        global _calendar_auth_failed, _calendar_auth_warned
+        _calendar_auth_failed = True
+        if not _calendar_auth_warned:
+            _calendar_auth_warned = True
+            logger.warning(
+                "Google Calendar token expired or revoked. "
+                "Re-authorize Google Calendar or disable GOOGLE_CALENDAR_ENABLED. "
+                "Booking remains saved."
+            )
+        else:
+            logger.debug(
+                "Google Calendar disabled for this runtime due to expired/revoked token (%s)",
+                action,
+            )
+
     @property
     def env_enabled(self) -> bool:
         return self.settings.google_calendar_enabled
 
     async def is_enabled(self) -> bool:
         """Effective sync: env flag AND admin DB toggle."""
+        if _calendar_auth_failed:
+            return False
         if not self.env_enabled:
             return False
         cal = await self.settings_repo.get_calendar_settings()
@@ -134,6 +171,12 @@ class CalendarService:
             return None
 
     def _log_api_error(self, action: str, exc: Exception) -> None:
+        if _calendar_auth_failed:
+            logger.debug("Google Calendar %s skipped: auth disabled for runtime", action)
+            return
+        if self._is_refresh_token_error(exc):
+            self._mark_auth_failed(action)
+            return
         try:
             from googleapiclient.errors import HttpError
 
@@ -480,6 +523,11 @@ class CalendarService:
         except Exception as exc:
             self._log_api_error("connection test", exc)
             detail = str(exc)
+            if self._is_refresh_token_error(exc):
+                return CalendarTestResult(
+                    ok=False,
+                    message_key="calendar_test_invalid_token",
+                )
             try:
                 from googleapiclient.errors import HttpError
 

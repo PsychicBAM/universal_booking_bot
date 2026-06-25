@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.bot.i18n import t
+from app.services.admin_bookings_service import BookingDetailSource, build_booking_view_callback
 
 DEFAULT_FILTER = "all"
 
@@ -144,7 +145,17 @@ def admin_client_bookings_kb(
             [
                 InlineKeyboardButton(
                     text=label,
-                    callback_data=f"adm_booking:{booking_id}",
+                    callback_data=build_booking_view_callback(
+                        booking_id,
+                        BookingDetailSource(
+                            origin="client",
+                            client_id=client_id,
+                            client_tab=section,
+                            client_filter=filter_key,
+                            page=page,
+                            client_section_page=section_page,
+                        ),
+                    ),
                 )
             ]
         )

@@ -43,6 +43,163 @@ LIST_SECTION_ALIASES = {
     "needs_change": "active",
 }
 DEFAULT_BOOKINGS_SECTION = "active"
+DEFAULT_CLIENT_FILTER = "all"
+
+
+@dataclass(frozen=True)
+class BookingDetailSource:
+    """Where admin opened a booking detail screen (for Back navigation)."""
+
+    origin: str = "bookings"  # bookings | client | unknown
+    section: str = DEFAULT_BOOKINGS_SECTION
+    page: int = 0
+    client_id: int | None = None
+    client_tab: str | None = None  # future | hist
+    client_filter: str = DEFAULT_CLIENT_FILTER
+    client_section_page: int = 0
+
+
+def _safe_int_token(token: str | None) -> int | None:
+    return int(token) if token and token.isdigit() else None
+
+
+def _client_tab_from_short(token: str) -> str:
+    return "future" if token == "f" else "hist"
+
+
+def _client_tab_to_short(tab: str) -> str:
+    return "f" if tab == "future" else "h"
+
+
+def build_booking_view_callback(booking_id: int, source: BookingDetailSource) -> str:
+    if source.origin == "client" and source.client_id is not None and source.client_tab:
+        tab = _client_tab_to_short(source.client_tab)
+        return (
+            f"adm_book:view:{booking_id}:from:c:{source.client_id}:{tab}:"
+            f"{source.client_filter}:{source.page}:{source.client_section_page}"
+        )
+    section = normalize_bookings_section(source.section)
+    return f"adm_book:view:{booking_id}:from:{section}:{source.page}"
+
+
+def parse_booking_detail_source(data: str) -> tuple[int | None, BookingDetailSource | None]:
+    parts = data.split(":")
+    if parts[0] == "adm_booking" and len(parts) >= 2:
+        booking_id = _safe_int_token(parts[1])
+        if booking_id is None:
+            return None, None
+        return booking_id, BookingDetailSource(origin="unknown")
+    if len(parts) < 4 or parts[0] != "adm_book" or parts[1] != "view":
+        return None, None
+    booking_id = _safe_int_token(parts[2])
+    if booking_id is None:
+        return None, None
+    if len(parts) >= 6 and parts[3] == "from":
+        if parts[4] == "c" and len(parts) >= 8:
+            client_id = _safe_int_token(parts[5])
+            if client_id is None:
+                return booking_id, BookingDetailSource(origin="unknown")
+            client_tab = _client_tab_from_short(parts[6])
+            from app.services.client_history_service import normalize_client_filter
+
+            client_filter = normalize_client_filter(parts[7] if len(parts) > 7 else DEFAULT_CLIENT_FILTER)
+            page = _safe_int_token(parts[8] if len(parts) > 8 else None) or 0
+            section_page = _safe_int_token(parts[9] if len(parts) > 9 else None) or 0
+            return booking_id, BookingDetailSource(
+                origin="client",
+                client_id=client_id,
+                client_tab=client_tab,
+                client_filter=client_filter,
+                page=page,
+                client_section_page=section_page,
+            )
+        section = resolve_bookings_list_section(parts[4] if len(parts) > 4 else DEFAULT_BOOKINGS_SECTION)
+        page = _safe_int_token(parts[5] if len(parts) > 5 else None) or 0
+        return booking_id, BookingDetailSource(section=section, page=page)
+    return booking_id, BookingDetailSource(origin="unknown")
+
+
+def booking_detail_back_callback(source: BookingDetailSource) -> str:
+    if source.origin == "client" and source.client_id is not None and source.client_tab:
+        return (
+            f"adm_cli:{source.client_tab}:{source.client_id}:"
+            f"{source.client_filter}:{source.page}:{source.client_section_page}"
+        )
+    if source.origin == "bookings":
+        return f"adm_book:list:{normalize_bookings_section(source.section)}:{source.page}"
+    return "adm_book:hub"
+
+
+def encode_attendance_back(source: BookingDetailSource) -> str:
+    if source.origin == "client" and source.client_id is not None and source.client_tab:
+        tab = _client_tab_to_short(source.client_tab)
+        return (
+            f"from:c:{source.client_id}:{tab}:{source.client_filter}:"
+            f"{source.page}:{source.client_section_page}"
+        )
+    section = normalize_bookings_section(source.section)
+    return f"from:{section}:{source.page}"
+
+
+def parse_attendance_back(back: str) -> BookingDetailSource:
+    if back.startswith("from:c:"):
+        parts = back.split(":")
+        client_id = _safe_int_token(parts[2] if len(parts) > 2 else None)
+        if client_id is None:
+            return BookingDetailSource(origin="unknown")
+        client_tab = _client_tab_from_short(parts[3] if len(parts) > 3 else "h")
+        from app.services.client_history_service import normalize_client_filter
+
+        client_filter = normalize_client_filter(parts[4] if len(parts) > 4 else DEFAULT_CLIENT_FILTER)
+        page = _safe_int_token(parts[5] if len(parts) > 5 else None) or 0
+        section_page = _safe_int_token(parts[6] if len(parts) > 6 else None) or 0
+        return BookingDetailSource(
+            origin="client",
+            client_id=client_id,
+            client_tab=client_tab,
+            client_filter=client_filter,
+            page=page,
+            client_section_page=section_page,
+        )
+    if back.startswith("from:"):
+        parts = back.split(":")
+        section = resolve_bookings_list_section(parts[1] if len(parts) > 1 else DEFAULT_BOOKINGS_SECTION)
+        page = _safe_int_token(parts[2] if len(parts) > 2 else None) or 0
+        return BookingDetailSource(section=section, page=page)
+    if back.startswith("list:"):
+        return BookingDetailSource(section="active", page=0)
+    return BookingDetailSource(origin="unknown")
+
+
+def booking_detail_action_flags(
+    booking: Booking,
+    *,
+    show_send_confirmation: bool = True,
+    now: datetime | None = None,
+) -> dict[str, bool]:
+    now = now or now_local()
+    status = booking.status.value if hasattr(booking.status, "value") else str(booking.status)
+    is_future = to_local_naive(booking.start_at) >= now
+    if status == BookingStatus.CANCELLED.value or status == BookingStatus.COMPLETED.value:
+        return {
+            "can_confirm": False,
+            "can_cancel": False,
+            "can_send_confirmation": False,
+            "show_message": True,
+        }
+    if not is_future:
+        return {
+            "can_confirm": False,
+            "can_cancel": False,
+            "can_send_confirmation": False,
+            "show_message": True,
+        }
+    return {
+        "can_confirm": status == BookingStatus.PENDING.value,
+        "can_cancel": status in (BookingStatus.PENDING.value, BookingStatus.CONFIRMED.value),
+        "can_send_confirmation": status == BookingStatus.CONFIRMED.value and show_send_confirmation,
+        "show_message": True,
+    }
 
 _FOLDER_INTRO_KEYS = {
     "pending_admin": "bookings_pending_admin_intro",
@@ -315,14 +472,11 @@ async def load_bookings_folder(
     return page_items, filtered, page, total_pages
 
 
-def parse_bookings_view_callback(data: str) -> tuple[int, str, int]:
-    parts = data.split(":")
-    booking_id = int(parts[2])
-    if len(parts) >= 6 and parts[3] == "from":
-        section = resolve_bookings_list_section(parts[4])
-        page = int(parts[5]) if parts[5].isdigit() else 0
-        return booking_id, section, page
-    return booking_id, DEFAULT_BOOKINGS_SECTION, 0
+def parse_bookings_view_callback(data: str) -> tuple[int, BookingDetailSource]:
+    booking_id, source = parse_booking_detail_source(data)
+    if booking_id is None or source is None:
+        return 0, BookingDetailSource(origin="unknown")
+    return booking_id, source
 
 
 def parse_bookings_list_callback(data: str) -> tuple[str, int]:
@@ -330,14 +484,3 @@ def parse_bookings_list_callback(data: str) -> tuple[str, int]:
     section = resolve_bookings_list_section(parts[2] if len(parts) > 2 else DEFAULT_BOOKINGS_SECTION)
     page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
     return section, page
-
-
-def parse_attendance_back(back: str) -> tuple[str, int]:
-    if back.startswith("from:"):
-        parts = back.split(":")
-        section = resolve_bookings_list_section(parts[1] if len(parts) > 1 else DEFAULT_BOOKINGS_SECTION)
-        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
-        return section, page
-    if back.startswith("list:"):
-        return "active", 0
-    return DEFAULT_BOOKINGS_SECTION, 0

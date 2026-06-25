@@ -179,21 +179,28 @@ def _detail_options(
 ) -> dict:
     settings = get_settings()
     editable = _is_editable_status(booking)
-    can_act = editable and to_local_naive(booking.start_at) - now_local() > timedelta(
-        hours=settings.cancel_booking_hours_before
+    is_future = to_local_naive(booking.start_at) >= now_local()
+    can_act = (
+        editable
+        and is_future
+        and to_local_naive(booking.start_at) - now_local() > timedelta(hours=settings.cancel_booking_hours_before)
     )
-    can_reschedule = editable and (
-        to_local_naive(booking.start_at) - now_local()
-        > timedelta(hours=settings.effective_reschedule_hours_before())
+    can_reschedule = (
+        editable
+        and is_future
+        and (
+            to_local_naive(booking.start_at) - now_local()
+            > timedelta(hours=settings.effective_reschedule_hours_before())
+        )
     )
     requires_location = bool(service and service.requires_location)
     asks_comment = bool(service and service.ask_client_comment)
     return {
         "can_reschedule": can_reschedule,
         "can_cancel": can_act,
-        "can_change_location": editable and active_locations_count > 0,
-        "can_change_address": editable and requires_location,
-        "can_change_comment": editable and asks_comment,
+        "can_change_location": editable and is_future and active_locations_count > 0,
+        "can_change_address": editable and is_future and requires_location,
+        "can_change_comment": editable and is_future and asks_comment,
     }
 
 

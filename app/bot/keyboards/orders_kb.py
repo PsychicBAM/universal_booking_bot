@@ -347,14 +347,14 @@ def client_orders_kb(orders: list[ServiceOrder], lang: str) -> InlineKeyboardMar
 
 def client_order_detail_kb(order_id: int, status: str, lang: str, *, section: str = "hub") -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    if status in (
+    active_statuses = (
         ServiceOrderStatus.NEW.value,
         ServiceOrderStatus.ACCEPTED.value,
         ServiceOrderStatus.IN_PROGRESS.value,
-    ):
-        rows.append(
-            [InlineKeyboardButton(text=t(lang, "order_write_to_order_button"), callback_data=f"myord:msg:{order_id}")]
-        )
+    )
+    rows.append(
+        [InlineKeyboardButton(text=t(lang, "order_write_to_order_button"), callback_data=f"myord:msg:{order_id}")]
+    )
     rows.append(
         [
             InlineKeyboardButton(
@@ -363,11 +363,7 @@ def client_order_detail_kb(order_id: int, status: str, lang: str, *, section: st
             )
         ]
     )
-    if status in (
-        ServiceOrderStatus.NEW.value,
-        ServiceOrderStatus.ACCEPTED.value,
-        ServiceOrderStatus.IN_PROGRESS.value,
-    ):
+    if status in active_statuses:
         rows.append(
             [InlineKeyboardButton(text=t(lang, "order_cancel_client"), callback_data=f"myord:cancel:{order_id}:{section}")]
         )

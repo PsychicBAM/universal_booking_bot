@@ -175,6 +175,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "clients_no_results": "No clients found.",
         "clients_back_admin": "🔙 Back to admin panel",
         "clients_back_list": "🔙 Back to list",
+        "client_callback_invalid": "This clients screen is outdated. Open Clients again.",
+        "booking_back_context_invalid": "This screen is outdated. Open the section again.",
+        "calendar_auth_expired_admin_hint": (
+            "Google Calendar needs re-authorization. The booking was saved, but no calendar event was added."
+        ),
         "clients_list_new": "🆕 {name} — {count} booking(s)",
         "clients_list_returning": "🔁 {name} — {count} bookings, next {date}",
         "clients_list_returning_no_next": "🔁 {name} — {count} bookings",
@@ -1138,7 +1143,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "service_mode_order_off": "❌ Orders without date/time",
         "service_mode_cannot_disable_all": "You cannot disable both modes. Keep at least one service type enabled.",
         "service_type_booking": "Service type: 📅 Date & time booking",
-        "service_type_order": "Service type: 📝 Order request",
+        "service_type_order": "Service type: Request without date/time",
+        "service_order_no_time_label": "📝 Request without date/time",
         "service_type_booking_btn": "📅 Booking",
         "service_type_order_btn": "📝 Order",
         "service_type_choose_title": "Choose service type",
@@ -1437,6 +1443,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "clients_no_results": "Клиенты не найдены.",
         "clients_back_admin": "🔙 Назад в админ-панель",
         "clients_back_list": "🔙 Назад к списку",
+        "client_callback_invalid": "Раздел клиентов устарел. Откройте Клиенты заново.",
+        "booking_back_context_invalid": "Экран устарел. Откройте раздел заново.",
+        "calendar_auth_expired_admin_hint": (
+            "Google Calendar требует повторной авторизации. Запись сохранена, но событие в календарь не добавлено."
+        ),
         "clients_list_new": "🆕 {name} — {count} запись(ей)",
         "clients_list_returning": "🔁 {name} — {count} записей, след. {date}",
         "clients_list_returning_no_next": "🔁 {name} — {count} записей",
@@ -2400,7 +2411,8 @@ TEXTS: dict[str, dict[str, str]] = {
         "service_mode_order_off": "❌ Заявки без даты и времени",
         "service_mode_cannot_disable_all": "Нельзя отключить оба режима. Оставьте хотя бы один тип услуг.",
         "service_type_booking": "Тип услуги: 📅 Запись по времени",
-        "service_type_order": "Тип услуги: 📝 Заявка без времени",
+        "service_type_order": "Тип услуги: Заявка без даты и времени",
+        "service_order_no_time_label": "📝 Заявка без даты и времени",
         "service_type_booking_btn": "📅 Запись",
         "service_type_order_btn": "📝 Заявка",
         "service_type_choose_title": "Выберите тип услуги",

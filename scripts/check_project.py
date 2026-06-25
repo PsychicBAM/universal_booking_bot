@@ -92,6 +92,18 @@ def _check_symbol_imports(app_dir: Path) -> None:
             "app.config",
             {"config.py"},
         ),
+        (
+            "SERVICE_TYPE_ORDER",
+            "SERVICE_TYPE_ORDER",
+            "app.models",
+            set(),
+        ),
+        (
+            "SERVICE_TYPE_BOOKING",
+            "SERVICE_TYPE_BOOKING",
+            "app.models",
+            set(),
+        ),
     ]
     for path in app_dir.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
@@ -99,6 +111,8 @@ def _check_symbol_imports(app_dir: Path) -> None:
             if call not in text:
                 continue
             if path.name in skip_def_files:
+                continue
+            if f"{symbol} =" in text:
                 continue
             if f"def {symbol}" in text:
                 continue
@@ -2360,6 +2374,69 @@ def main() -> int:
         print("OK: service price display modes")
     except Exception as exc:
         print(f"FAIL: service price display modes — {exc}")
+        return 1
+
+    try:
+        import inspect
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.models import SERVICE_TYPE_BOOKING, SERVICE_TYPE_ORDER
+
+        import app.bot.handlers.client as client_handlers
+
+        if getattr(client_handlers, "SERVICE_TYPE_ORDER", None) != SERVICE_TYPE_ORDER:
+            print("FAIL: test A — client.py must import SERVICE_TYPE_ORDER")
+            return 1
+        if getattr(client_handlers, "SERVICE_TYPE_BOOKING", None) != SERVICE_TYPE_BOOKING:
+            print("FAIL: test A — client.py must import SERVICE_TYPE_BOOKING")
+            return 1
+
+        back_src = inspect.getsource(client_handlers._services_for_back)
+        if "SERVICE_TYPE_ORDER" not in back_src or "SERVICE_TYPE_BOOKING" not in back_src:
+            print("FAIL: test B — _services_for_back must use service type constants")
+            return 1
+
+        async def _run_back_tests() -> None:
+            state = AsyncMock()
+            session = MagicMock()
+            repo = AsyncMock()
+            repo.list_client_services = AsyncMock(return_value=[])
+
+            with patch.object(client_handlers, "ServiceRepository", return_value=repo):
+                state.get_data.return_value = {"flow_kind": "order"}
+                services, show_icons = await client_handlers._services_for_back(state, session)
+                repo.list_client_services.assert_awaited_with(service_type=SERVICE_TYPE_ORDER)
+                if show_icons:
+                    raise AssertionError("test C — order back must not show type icons")
+                if services != []:
+                    raise AssertionError("test C — order back services list")
+
+                repo.list_client_services.reset_mock()
+                state.get_data.return_value = {"flow_kind": "booking"}
+                services, show_icons = await client_handlers._services_for_back(state, session)
+                repo.list_client_services.assert_awaited_with(service_type=SERVICE_TYPE_BOOKING)
+                if show_icons:
+                    raise AssertionError("test D — booking back must not show type icons")
+
+                repo.list_client_services.reset_mock()
+                state.get_data.return_value = {"flow_kind": "unified"}
+                services, show_icons = await client_handlers._services_for_back(state, session)
+                repo.list_client_services.assert_awaited_with()
+                if not show_icons:
+                    raise AssertionError("test D — unified back must show type icons")
+
+        import asyncio
+
+        asyncio.run(_run_back_tests())
+
+        handlers_src = inspect.getsource(client_handlers.back_to_services)
+        if "_services_for_back" not in handlers_src or "cb:svc_back" not in inspect.getsource(client_handlers):
+            print("FAIL: test C/D — back_to_services must use _services_for_back")
+            return 1
+
+        print("OK: client service type constants and back navigation")
+    except Exception as exc:
+        print(f"FAIL: client service type constants — {exc}")
         return 1
 
     try:

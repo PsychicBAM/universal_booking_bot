@@ -56,7 +56,7 @@ from app.bot.booking_client_data import (
     show_phone_collection,
 )
 from app.bot.keyboards.booking_confirm_kb import booking_confirm_kb, booking_edit_menu_kb
-from app.models import SERVICE_TYPE_BOOKING
+from app.models import SERVICE_TYPE_BOOKING, SERVICE_TYPE_ORDER
 from app.database.session import async_session_factory
 from app.repositories import (
     BookingRepository,

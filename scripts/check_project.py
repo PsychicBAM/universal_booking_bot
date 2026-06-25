@@ -2263,6 +2263,106 @@ def main() -> int:
         return 1
 
     try:
+        from types import SimpleNamespace
+
+        from app.bot.i18n import t
+        from app.bot.keyboards.service_price_kb import admin_service_price_kb
+        from app.models import PRICE_MODE_EXACT, PRICE_MODE_FROM, SERVICE_TYPE_BOOKING, SERVICE_TYPE_ORDER
+        from app.utils.formatting import (
+            format_service,
+            format_service_admin,
+            format_service_price,
+            normalize_price_mode,
+        )
+
+        def _priced_service(**kwargs) -> SimpleNamespace:
+            base = dict(
+                name="Telegram bot",
+                description="Build a bot",
+                price=5000,
+                duration_minutes=60,
+                buffer_after_minutes=0,
+                is_active=True,
+                requires_location=False,
+                ask_client_comment=False,
+                show_media_to_clients=True,
+                service_type=SERVICE_TYPE_ORDER,
+            )
+            base.update(kwargs)
+            return SimpleNamespace(**base)
+
+        # Test A — missing price_mode defaults to exact
+        legacy = _priced_service()
+        if format_service_price(legacy, "ru") != "Цена: 5000 ₽":
+            print(f"FAIL: test A — legacy exact price: {format_service_price(legacy, 'ru')!r}")
+            return 1
+
+        exact_svc = _priced_service(price_mode=PRICE_MODE_EXACT)
+        if format_service_price(exact_svc, "ru") != "Цена: 5000 ₽":
+            print("FAIL: test B — exact price RU")
+            return 1
+
+        from_svc = _priced_service(price_mode=PRICE_MODE_FROM)
+        if format_service_price(from_svc, "ru") != "Цена: от 5000 ₽":
+            print(f"FAIL: test C — from price RU: {format_service_price(from_svc, 'ru')!r}")
+            return 1
+
+        if format_service_price(exact_svc, "en") != "Price: 5000 ₽":
+            print("FAIL: test D — exact price EN")
+            return 1
+
+        if format_service_price(from_svc, "en") != "Price: from 5000 ₽":
+            print("FAIL: test E — from price EN")
+            return 1
+
+        bad_mode = _priced_service(price_mode="unknown")
+        if normalize_price_mode(bad_mode) != PRICE_MODE_EXACT:
+            print("FAIL: test F — unknown price_mode must fall back to exact")
+            return 1
+        if format_service_price(bad_mode, "ru") != "Цена: 5000 ₽":
+            print("FAIL: test F — unknown price_mode formats as exact")
+            return 1
+
+        price_kb = {
+            btn.callback_data
+            for row in admin_service_price_kb(1, exact_svc, "ru").inline_keyboard
+            for btn in row
+        }
+        for required in (
+            "adm_svc:price:amt:1",
+            "adm_svc:price:mode:exact:1",
+            "adm_svc:price:mode:from:1",
+            "adm_svc:price:back:1",
+        ):
+            if required not in price_kb:
+                print(f"FAIL: test G — price keyboard missing {required}")
+                return 1
+
+        booking_svc = _priced_service(
+            name="Lesson",
+            service_type=SERVICE_TYPE_BOOKING,
+            price_mode=PRICE_MODE_EXACT,
+        )
+        booking_text = format_service(booking_svc, "ru")
+        if "Цена: 5000 ₽" not in booking_text or "Длительность" not in booking_text:
+            print("FAIL: test H — booking service formatting")
+            return 1
+
+        order_from_admin = format_service_admin(from_svc, "ru", photos_count=0, videos_count=0, locations_count=0)
+        if "Цена: от 5000 ₽" not in order_from_admin:
+            print(f"FAIL: test I — order from price admin detail: {order_from_admin!r}")
+            return 1
+        order_from_client = format_service(from_svc, "ru")
+        if "Цена: от 5000 ₽" not in order_from_client:
+            print("FAIL: test I — order from price client card")
+            return 1
+
+        print("OK: service price display modes")
+    except Exception as exc:
+        print(f"FAIL: service price display modes — {exc}")
+        return 1
+
+    try:
         import scripts.smoke_e2e as smoke_e2e
 
         smoke_code = smoke_e2e.main()

@@ -399,7 +399,7 @@ def admin_service_detail_kb(
                 admin_service_detail_location_row(service_id, lang),
             ]
         )
-    rows.append([InlineKeyboardButton(text=t(lang, "edit_price"), callback_data=f"adm_svc_edit:price:{service_id}")])
+    rows.append([InlineKeyboardButton(text=t(lang, "edit_price"), callback_data=f"adm_svc:price:menu:{service_id}")])
     rows.extend(admin_service_detail_media_rows(service_id, show_media_to_clients, lang))
     if not archived:
         if is_active:

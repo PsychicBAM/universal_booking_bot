@@ -32,6 +32,10 @@ class ServiceOrderStatus(str, enum.Enum):
 SERVICE_TYPE_BOOKING = "booking"
 SERVICE_TYPE_ORDER = "order"
 
+PRICE_MODE_EXACT = "exact"
+PRICE_MODE_FROM = "from"
+VALID_PRICE_MODES = frozenset({PRICE_MODE_EXACT, PRICE_MODE_FROM})
+
 
 class Admin(Base):
     __tablename__ = "admins"
@@ -76,6 +80,7 @@ class Service(Base):
     ask_client_comment: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     show_media_to_clients: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     price: Mapped[int] = mapped_column(Integer, default=0)
+    price_mode: Mapped[str] = mapped_column(String(10), default=PRICE_MODE_EXACT, nullable=False)
     service_type: Mapped[str] = mapped_column(String(20), default="booking", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

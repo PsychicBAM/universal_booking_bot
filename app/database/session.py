@@ -101,6 +101,11 @@ async def _migrate_sqlite_columns() -> None:
             await conn.exec_driver_sql(
                 "ALTER TABLE services ADD COLUMN service_type VARCHAR(20) NOT NULL DEFAULT 'booking'"
             )
+        if "price_mode" not in service_columns:
+            await conn.exec_driver_sql(
+                "ALTER TABLE services ADD COLUMN price_mode VARCHAR(10) NOT NULL DEFAULT 'exact'"
+            )
+            await conn.exec_driver_sql("UPDATE services SET price_mode = 'exact' WHERE price_mode IS NULL")
 
         result = await conn.exec_driver_sql(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='service_orders'"

@@ -25,6 +25,7 @@ from app.bot.keyboards import (
     cancel_kb,
     permanent_delete_confirm_kb,
 )
+from app.bot.keyboards.service_price_kb import admin_service_price_kb
 from app.bot.keyboards.service_buffer_kb import service_buffer_kb
 from app.bot.keyboards.service_duration_kb import service_duration_kb
 from app.bot.keyboards.service_type_kb import service_type_change_kb, service_type_choose_kb
@@ -34,7 +35,14 @@ from app.bot.states import (
 )
 from app.config import get_settings
 from app.database.session import async_session_factory
-from app.models import BookingStatus, Client, SERVICE_TYPE_BOOKING, SERVICE_TYPE_ORDER
+from app.models import (
+    PRICE_MODE_EXACT,
+    PRICE_MODE_FROM,
+    BookingStatus,
+    Client,
+    SERVICE_TYPE_BOOKING,
+    SERVICE_TYPE_ORDER,
+)
 from app.repositories import (
     BookingRepository,
     ServiceRepository,
@@ -48,7 +56,13 @@ from app.services.booking_notification_service import (
 from app.services.language_service import get_user_language
 from app.services.service_media_service import build_admin_service_detail
 from app.services.service_modes_service import default_service_type_for_modes, load_service_modes
-from app.utils.formatting import format_booking, parse_time
+from app.utils.formatting import (
+    format_booking,
+    format_service_price_amount,
+    format_service_price_settings_text,
+    normalize_price_mode,
+    parse_time,
+)
 from app.utils.perf_logging import log_action_timing
 
 router = Router()
@@ -132,7 +146,7 @@ async def _apply_service_buffer(
 
 
 def _service_price_label(service, lang: str) -> str:
-    return f"{service.price} ₽" if service.price else t(lang, "price_free")
+    return format_service_price_amount(service, lang)
 
 
 def _format_archived_service_detail(service, bookings_count: int, lang: str) -> str:
@@ -773,6 +787,102 @@ async def admin_service_delete_confirmed(callback: CallbackQuery, is_admin: bool
     await admin_services_list(callback, is_admin, lang)
 
 
+async def _show_service_price_settings(
+    event: CallbackQuery | Message,
+    lang: str,
+    service_id: int,
+) -> None:
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+    if not service:
+        if isinstance(event, CallbackQuery):
+            await safe_callback_answer(event, t(lang, "service_not_found"), show_alert=True)
+        else:
+            await event.answer(t(lang, "service_not_found"))
+        return
+    text = format_service_price_settings_text(service, lang)
+    keyboard = admin_service_price_kb(service_id, service, lang)
+    if isinstance(event, CallbackQuery):
+        await edit_or_send(event, text, reply_markup=keyboard)
+    else:
+        await event.answer(text, reply_markup=keyboard)
+
+
+@router.callback_query(F.data.regexp(r"^adm_svc:price:menu:\d+$"))
+@router.callback_query(F.data.startswith("adm_svc_edit:price:"))
+async def admin_service_price_menu(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    if not is_admin:
+        return
+    service_id = int(callback.data.rsplit(":", 1)[1])
+    await safe_callback_answer(callback)
+    await _show_service_price_settings(callback, lang, service_id)
+
+
+@router.callback_query(F.data.regexp(r"^adm_svc:price:amt:\d+$"))
+async def admin_service_price_amount_start(
+    callback: CallbackQuery,
+    state: FSMContext,
+    is_admin: bool,
+    lang: str,
+) -> None:
+    if not is_admin:
+        return
+    service_id = int(callback.data.rsplit(":", 1)[1])
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+        if not service:
+            await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
+            return
+    await state.update_data(
+        edit_service_id=service_id,
+        edit_field="price",
+        flow_origin="price_settings",
+    )
+    await state.set_state(AdminServiceStates.editing_field)
+    await callback.message.answer(t(lang, "enter_new_price"), reply_markup=cancel_kb(lang))
+    await safe_callback_answer(callback)
+
+
+@router.callback_query(F.data.regexp(r"^adm_svc:price:mode:(exact|from):\d+$"))
+async def admin_service_price_mode_set(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    if not is_admin:
+        return
+    parts = callback.data.split(":")
+    mode = parts[3]
+    service_id = int(parts[4])
+    if mode not in (PRICE_MODE_EXACT, PRICE_MODE_FROM):
+        await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+        return
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+        if not service:
+            await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
+            return
+        if normalize_price_mode(service) == mode:
+            await safe_callback_answer(callback)
+            await _show_service_price_settings(callback, lang, service_id)
+            return
+        service.price_mode = mode
+        await session.commit()
+    await safe_callback_answer(callback, t(lang, "price_mode_updated"))
+    await _show_service_price_settings(callback, lang, service_id)
+
+
+@router.callback_query(F.data.regexp(r"^adm_svc:price:back:\d+$"))
+async def admin_service_price_back(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    if not is_admin:
+        return
+    service_id = int(callback.data.rsplit(":", 1)[1])
+    async with async_session_factory() as session:
+        service = await ServiceRepository(session).get_by_id(service_id)
+        if not service:
+            await safe_callback_answer(callback, t(lang, "service_not_found"), show_alert=True)
+            return
+        text, kb = await build_admin_service_detail(session, service, lang)
+    await safe_callback_answer(callback)
+    await edit_or_send(callback, text, reply_markup=kb)
+
+
 @router.callback_query(F.data.startswith("adm_svc_edit:"))
 async def admin_service_edit(callback: CallbackQuery, state: FSMContext, is_admin: bool, lang: str) -> None:
     if not is_admin:
@@ -798,11 +908,14 @@ async def admin_service_edit(callback: CallbackQuery, state: FSMContext, is_admi
         await callback.message.answer(_buffer_prompt(lang), reply_markup=service_buffer_kb(lang))
         await safe_callback_answer(callback)
         return
+    if field == "price":
+        await safe_callback_answer(callback)
+        await _show_service_price_settings(callback, lang, service_id)
+        return
     await state.set_state(AdminServiceStates.editing_field)
     prompts = {
         "name": t(lang, "enter_new_name"),
         "desc": t(lang, "enter_new_description"),
-        "price": t(lang, "enter_new_price"),
     }
     await callback.message.answer(prompts.get(field, t(lang, "enter_value")), reply_markup=cancel_kb(lang))
     await safe_callback_answer(callback)
@@ -829,6 +942,11 @@ async def admin_service_edit_value(message: Message, state: FSMContext, lang: st
                 return
             service.price = int(message.text.strip())
         await session.commit()
+        if data.get("flow_origin") == "price_settings" and field == "price":
+            await state.clear()
+            await message.answer(t(lang, "updated"))
+            await _show_service_price_settings(message, lang, service_id)
+            return
         text, kb = await build_admin_service_detail(session, service, lang)
     await state.clear()
     await message.answer(t(lang, "updated"))

@@ -2,7 +2,57 @@ from datetime import date, datetime, time
 from html import escape
 
 from app.bot.i18n import format_buffer, format_duration, status_label, t
-from app.models import Booking, BookingStatus, Service, ServiceOrder, ServiceOrderStatus
+from app.models import (
+    PRICE_MODE_EXACT,
+    PRICE_MODE_FROM,
+    VALID_PRICE_MODES,
+    Booking,
+    BookingStatus,
+    Service,
+    ServiceOrder,
+    ServiceOrderStatus,
+)
+
+
+def normalize_price_mode(service: Service | object) -> str:
+    mode = getattr(service, "price_mode", None) or PRICE_MODE_EXACT
+    key = str(mode).strip().lower()
+    return key if key in VALID_PRICE_MODES else PRICE_MODE_EXACT
+
+
+def format_service_price_amount(service: Service | object, lang: str = "ru") -> str:
+    price = int(getattr(service, "price", 0) or 0)
+    if not price:
+        return t(lang, "price_free")
+    amount = f"{price} ₽"
+    if normalize_price_mode(service) == PRICE_MODE_FROM:
+        return t(lang, "price_from_amount", amount=amount)
+    return amount
+
+
+def format_service_price(service: Service | object, lang: str = "ru") -> str:
+    price = int(getattr(service, "price", 0) or 0)
+    if not price:
+        return t(lang, "price_free")
+    return t(lang, "price_label", price=format_service_price_amount(service, lang))
+
+
+def format_service_price_settings_text(service: Service, lang: str = "ru") -> str:
+    mode = normalize_price_mode(service)
+    type_line = (
+        f"✅ {t(lang, 'price_mode_from')}"
+        if mode == PRICE_MODE_FROM
+        else f"✅ {t(lang, 'price_mode_exact')}"
+    )
+    return "\n".join(
+        [
+            t(lang, "price_settings_title"),
+            "",
+            t(lang, "price_current_label", price=format_service_price_amount(service, lang)),
+            t(lang, "price_type_label"),
+            type_line,
+        ]
+    )
 
 
 def format_date(d: date) -> str:
@@ -54,7 +104,7 @@ def _location_comment_lines(
 def format_service(service: Service, lang: str = "ru") -> str:
     from app.models import SERVICE_TYPE_ORDER
 
-    price = t(lang, "price_label", price=f"{service.price} ₽") if service.price else t(lang, "price_free")
+    price = format_service_price(service, lang)
     desc = service.description or ""
     is_order = service.service_type == SERVICE_TYPE_ORDER
     icon = "📝" if is_order else "📋"
@@ -83,7 +133,7 @@ def format_service_admin(
     from app.models import SERVICE_TYPE_ORDER
 
     active = t(lang, "yes") if service.is_active else t(lang, "no")
-    price = f"{service.price} ₽" if service.price else t(lang, "price_free")
+    price = format_service_price(service, lang)
     desc = escape(service.description) if service.description else ""
     media_status = t(lang, "media_enabled") if service.show_media_to_clients else t(lang, "media_disabled")
     type_line = format_service_type_line(service, lang)
@@ -92,7 +142,7 @@ def format_service_admin(
         lines = [
             f"📝 {service.name}",
             type_line,
-            f"{t(lang, 'price_label', price=price)}",
+            f"{price}",
             f"{t(lang, 'client_media_display', status=media_status)}",
             f"{t(lang, 'active_label', value=active)}",
             f"{t(lang, 'photos_count', count=str(photos_count))}",
@@ -117,7 +167,7 @@ def format_service_admin(
         f"{t(lang, 'photos_count', count=str(photos_count))}\n"
         f"{t(lang, 'videos_count', count=str(videos_count))}\n"
         f"{t(lang, 'client_media_display', status=media_status)}\n"
-        f"{t(lang, 'price_label', price=price)}\n"
+        f"{price}\n"
         f"{t(lang, 'active_label', value=active)}\n"
         f"{desc}"
     ).strip()

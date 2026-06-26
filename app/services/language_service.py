@@ -124,5 +124,42 @@ async def get_user_language(telegram_id: int) -> str:
         enabled = await load_enabled_languages(session)
         default = await get_effective_default_language(session)
         client = await ClientRepository(session).get_by_telegram_id(telegram_id)
-        user_lang = client.language if client else None
-        return effective_lang(user_lang, enabled, default or settings.default_language)
+        return resolve_client_lang(
+            client,
+            enabled_languages=enabled,
+            default_language=default or settings.default_language,
+        )
+
+
+def resolve_client_lang(
+    client,
+    *,
+    enabled_languages: list[str] | None = None,
+    default_language: str | None = None,
+) -> str:
+    """Pick language for proactive client messages (reminders, notifications).
+
+    1. Use client.language only when it is a supported bot language.
+    2. Otherwise use the configured default language.
+    3. Never use Telegram language_code here.
+    4. English is used only when it is the effective default / sole enabled language.
+    """
+    settings = get_settings()
+    if enabled_languages is not None:
+        enabled = parse_enabled_languages_value(",".join(enabled_languages))
+    else:
+        enabled = parse_enabled_languages_value(",".join(get_enabled_languages_sync()))
+    default = default_language or settings.default_language
+    user_lang: str | None = None
+    if client and client.language:
+        lang = str(client.language).strip()
+        if lang in VALID_LANG_CODES and lang in enabled:
+            user_lang = lang
+    return effective_lang(user_lang, enabled, default)
+
+
+async def resolve_client_lang_for_client(client) -> str:
+    async with async_session_factory() as session:
+        enabled = await load_enabled_languages(session)
+        default = await get_effective_default_language(session)
+    return resolve_client_lang(client, enabled_languages=enabled, default_language=default)

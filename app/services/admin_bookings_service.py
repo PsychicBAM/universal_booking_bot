@@ -171,6 +171,32 @@ def parse_attendance_back(back: str) -> BookingDetailSource:
     return BookingDetailSource(origin="unknown")
 
 
+def is_manual_attendance_send_eligible(
+    booking: Booking | None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Future CONFIRMED bookings may receive a manual attendance question."""
+    if not booking:
+        return False
+    now = now or now_local()
+    status = booking.status.value if hasattr(booking.status, "value") else str(booking.status)
+    if status != BookingStatus.CONFIRMED.value:
+        return False
+    return to_local_naive(booking.start_at) >= now
+
+
+def parse_admin_confirm_callback(data: str) -> tuple[int, BookingDetailSource]:
+    parts = data.split(":")
+    if len(parts) < 2 or parts[0] != "adm_confirm":
+        raise ValueError("invalid admin confirm callback")
+    booking_id = int(parts[1])
+    if len(parts) > 2:
+        back = ":".join(parts[2:])
+        return booking_id, parse_attendance_back(back)
+    return booking_id, BookingDetailSource(section="active", page=0)
+
+
 def booking_detail_action_flags(
     booking: Booking,
     *,
@@ -197,7 +223,8 @@ def booking_detail_action_flags(
     return {
         "can_confirm": status == BookingStatus.PENDING.value,
         "can_cancel": status in (BookingStatus.PENDING.value, BookingStatus.CONFIRMED.value),
-        "can_send_confirmation": status == BookingStatus.CONFIRMED.value and show_send_confirmation,
+        "can_send_confirmation": is_manual_attendance_send_eligible(booking, now=now)
+        and show_send_confirmation,
         "show_message": True,
     }
 

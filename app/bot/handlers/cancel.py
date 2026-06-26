@@ -6,8 +6,7 @@ from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from app.bot.utils.callbacks import safe_callback_answer
 
 from app.bot.i18n import CANCEL_TEXTS, t
-from app.bot.keyboards import main_menu
-from app.bot.utils.menu_helpers import menu_mode_kwargs, show_admin_panel
+from app.bot.utils.menu_helpers import show_admin_panel, show_main_menu
 from app.database.session import async_session_factory
 from app.bot.keyboards.attendance_kb import attendance_action_kb
 from app.bot.settings_ui import send_settings_main_after_cancel
@@ -70,9 +69,7 @@ async def _send_cancel_destination(message: Message, destination: str, is_admin:
     if destination == "admin":
         await show_admin_panel(message, lang)
     else:
-        async with async_session_factory() as session:
-            kwargs = await menu_mode_kwargs(session)
-        await message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang, **kwargs))
+        await show_main_menu(message, lang, is_admin)
 
 
 @router.message(F.text.in_(CANCEL_TEXTS))
@@ -81,7 +78,7 @@ async def global_cancel(message: Message, state: FSMContext, is_admin: bool, lan
 
     if current is None:
         await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
-        await message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        await show_main_menu(message, lang, is_admin)
         return
 
     if current == AdminWorkingHoursStates.manual_time.state:
@@ -106,12 +103,7 @@ async def global_cancel(message: Message, state: FSMContext, is_admin: bool, lan
 
             await show_my_order_detail(message, lang, order_id)
             return
-        from app.bot.utils.menu_helpers import menu_mode_kwargs
-        from app.database.session import async_session_factory
-
-        async with async_session_factory() as session:
-            kwargs = await menu_mode_kwargs(session)
-        await message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang, **kwargs))
+        await show_main_menu(message, lang, is_admin)
         return
 
     if current.startswith("AdminOrderStates"):
@@ -230,7 +222,7 @@ async def global_cancel(message: Message, state: FSMContext, is_admin: bool, lan
     if current.startswith("ClientSupportStates"):
         await state.clear()
         await message.answer(t(lang, "cancelled"), reply_markup=ReplyKeyboardRemove())
-        await message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        await show_main_menu(message, lang, is_admin)
         return
 
     if current.startswith("AdminSupportStates"):
@@ -274,7 +266,7 @@ async def cancel_flow_callback(callback: CallbackQuery, state: FSMContext, is_ad
             await callback.message.edit_text(t(lang, "cancelled"))
         except TelegramBadRequest:
             await callback.message.answer(t(lang, "cancelled"))
-        await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        await show_main_menu(callback, lang, is_admin)
         return
 
     if current.startswith("AdminServiceMediaStates"):
@@ -349,7 +341,7 @@ async def cancel_flow_callback(callback: CallbackQuery, state: FSMContext, is_ad
     if current.startswith("ClientSupportStates"):
         await state.clear()
         await safe_callback_answer(callback, t(lang, "cancelled"))
-        await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        await show_main_menu(callback, lang, is_admin)
         return
 
     if current.startswith("AdminSupportStates"):
@@ -395,7 +387,5 @@ async def cancel_flow_callback(callback: CallbackQuery, state: FSMContext, is_ad
     if destination == "admin":
         await show_admin_panel(callback.message, lang)
     else:
-        async with async_session_factory() as session:
-            kwargs = await menu_mode_kwargs(session)
-        await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang, **kwargs))
+        await show_main_menu(callback, lang, is_admin)
     await safe_callback_answer(callback)

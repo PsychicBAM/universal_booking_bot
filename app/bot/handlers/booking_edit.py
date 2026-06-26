@@ -6,7 +6,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.i18n import t
-from app.bot.keyboards import SKIP_TEXTS, cancel_kb, main_menu, skip_cancel_kb
+from app.bot.keyboards import SKIP_TEXTS, cancel_kb, skip_cancel_kb
+from app.bot.utils.menu_helpers import show_main_menu
 from app.bot.keyboards.booking_edit_kb import (
     client_booking_detail_kb,
     edit_location_kb,
@@ -177,30 +178,17 @@ def _detail_options(
     service: Service | None,
     active_locations_count: int,
 ) -> dict:
-    settings = get_settings()
     editable = _is_editable_status(booking)
     is_future = to_local_naive(booking.start_at) >= now_local()
-    can_act = (
-        editable
-        and is_future
-        and to_local_naive(booking.start_at) - now_local() > timedelta(hours=settings.cancel_booking_hours_before)
-    )
-    can_reschedule = (
-        editable
-        and is_future
-        and (
-            to_local_naive(booking.start_at) - now_local()
-            > timedelta(hours=settings.effective_reschedule_hours_before())
-        )
-    )
+    can_show_actions = editable and is_future
     requires_location = bool(service and service.requires_location)
     asks_comment = bool(service and service.ask_client_comment)
     return {
-        "can_reschedule": can_reschedule,
-        "can_cancel": can_act,
-        "can_change_location": editable and is_future and active_locations_count > 0,
-        "can_change_address": editable and is_future and requires_location,
-        "can_change_comment": editable and is_future and asks_comment,
+        "can_reschedule": can_show_actions,
+        "can_cancel": can_show_actions,
+        "can_change_location": can_show_actions and active_locations_count > 0,
+        "can_change_address": can_show_actions and requires_location,
+        "can_change_comment": can_show_actions and asks_comment,
     }
 
 
@@ -258,7 +246,7 @@ async def legacy_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: s
         await notify_admins_client_cancelled(callback.bot, booking, service, lang=lang)
     await state.clear()
     await edit_or_send(callback, t(lang, "booking_cancelled"))
-    await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+    await show_main_menu(callback, lang, is_admin)
     await safe_callback_answer(callback)
 
 
@@ -299,7 +287,7 @@ async def my_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: str, 
         await notify_admins_client_cancelled(callback.bot, booking, service, lang=lang)
     await state.clear()
     await edit_or_send(callback, t(lang, "booking_cancelled"))
-    await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+    await show_main_menu(callback, lang, is_admin)
     await safe_callback_answer(callback)
 
 

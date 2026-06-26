@@ -6,7 +6,7 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.handlers.booking_edit import begin_client_reschedule
 from app.bot.i18n import t
-from app.bot.keyboards import main_menu
+from app.bot.utils.menu_helpers import show_main_menu
 from app.bot.keyboards.attendance_kb import attendance_action_kb, attendance_action_prompt_text
 from app.bot.states import AttendanceStates
 from app.bot.utils.callbacks import safe_callback_answer
@@ -190,7 +190,7 @@ async def attendance_cancel(callback: CallbackQuery, is_admin: bool, lang: str, 
         return
     await state.clear()
     await edit_or_send(callback, t(lang, "booking_cancelled"), reply_markup=None)
-    await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+    await show_main_menu(callback, lang, is_admin)
     await safe_callback_answer(callback)
 
 

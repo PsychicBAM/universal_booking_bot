@@ -108,7 +108,12 @@ def admin_booking_detail_kb(
     rows: list[list[InlineKeyboardButton]] = []
     if flags["can_confirm"]:
         rows.append(
-            [InlineKeyboardButton(text=t(lang, "confirm_booking_btn"), callback_data=f"adm_confirm:{booking_id}")]
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "confirm_booking_btn"),
+                    callback_data=f"adm_confirm:{booking_id}:{back}",
+                )
+            ]
         )
     if flags["can_cancel"]:
         rows.append(

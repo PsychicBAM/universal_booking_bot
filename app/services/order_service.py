@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.models import OrderMessage, ServiceOrder, ServiceOrderStatus
 from app.repositories import ClientRepository, OrderMessageRepository, ServiceOrderRepository, ServiceRepository
-from app.services.language_service import get_user_language
+from app.services.language_service import get_user_language, resolve_client_lang_for_client
 from app.utils.formatting import (
     format_order_accepted_client_notification,
     format_order_admin,
@@ -214,7 +214,7 @@ async def notify_client_order_accepted(bot: Bot, order: ServiceOrder, service) -
         client = await session.get(Client, order.client_id)
     if not client:
         return
-    client_lang = client.language or get_settings().default_language
+    client_lang = await resolve_client_lang_for_client(client)
     text = format_order_accepted_client_notification(order, service, client_lang)
     try:
         await bot.send_message(client.telegram_id, text)
@@ -230,7 +230,7 @@ async def notify_client_order_declined(bot: Bot, order: ServiceOrder, service) -
         client = await session.get(Client, order.client_id)
     if not client:
         return
-    client_lang = client.language or get_settings().default_language
+    client_lang = await resolve_client_lang_for_client(client)
     text = format_order_declined_client_notification(order, service, client_lang)
     try:
         await bot.send_message(client.telegram_id, text)
@@ -279,7 +279,7 @@ async def notify_client_order_message(
         client = await session.get(Client, order.client_id)
     if not client:
         return
-    client_lang = client.language or get_settings().default_language
+    client_lang = await resolve_client_lang_for_client(client)
     text = format_order_new_message_client_notification(order, service, message_text, client_lang)
     try:
         await bot.send_message(

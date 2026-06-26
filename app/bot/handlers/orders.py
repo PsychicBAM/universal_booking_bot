@@ -10,7 +10,6 @@ from app.bot.keyboards import (
     MY_ORDERS_TEXTS,
     ORDER_SERVICES_TEXTS,
     cancel_kb,
-    main_menu,
     my_activity_kb,
     services_kb,
 )
@@ -27,7 +26,7 @@ from app.bot.keyboards.orders_kb import (
 from app.bot.order_client_data import show_order_confirmation, start_order_flow
 from app.bot.states import BookingStates, OrderStates
 from app.bot.utils.callbacks import safe_callback_answer
-from app.bot.utils.menu_helpers import menu_mode_kwargs
+from app.bot.utils.menu_helpers import mode_aware_main_menu, show_main_menu
 from app.bot.utils.service_helpers import client_service_unavailable_key, is_order_service, is_service_bookable
 from app.bot.utils.telegram_ui import edit_or_send
 from app.database.session import async_session_factory
@@ -70,23 +69,36 @@ async def my_activity_hub(message: Message, lang: str) -> None:
 @router.callback_query(F.data == "myact:bookings")
 async def my_activity_bookings(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
     await safe_callback_answer(callback)
-    from app.bot.handlers.client import my_bookings
+    if await state.get_state():
+        await state.clear()
+    await state.update_data(my_bookings_from_hub=True)
+    from app.bot.handlers.client import show_my_bookings
 
-    await my_bookings(callback.message, lang)
+    await show_my_bookings(callback, lang, from_activity_hub=True)
+
+
+@router.callback_query(F.data == "myact:hub")
+async def my_activity_hub_callback(callback: CallbackQuery, lang: str) -> None:
+    await safe_callback_answer(callback)
+    await edit_or_send(
+        callback,
+        f"{t(lang, 'my_activity_title')}\n\n{t(lang, 'my_activity_intro')}",
+        reply_markup=my_activity_kb(lang),
+    )
 
 
 @router.callback_query(F.data == "myact:orders")
 async def my_activity_orders(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
     await safe_callback_answer(callback)
-    await my_orders_list(callback.message, state, lang)
+    if await state.get_state():
+        await state.clear()
+    await show_my_orders_hub(callback, lang)
 
 
 @router.callback_query(F.data == "myact:back")
 async def my_activity_back(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     await safe_callback_answer(callback)
-    async with async_session_factory() as session:
-        kwargs = await menu_mode_kwargs(session)
-    await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang, **kwargs))
+    await show_main_menu(callback, lang, is_admin)
 
 
 @router.message(F.text.in_(ORDER_SERVICES_TEXTS))
@@ -145,9 +157,8 @@ async def order_confirm_submit(callback: CallbackQuery, state: FSMContext, bot: 
         )
         await session.commit()
     await state.clear()
-    async with async_session_factory() as session:
-        kwargs = await menu_mode_kwargs(session)
-    await callback.message.answer(t(lang, "order_submitted_client"), reply_markup=main_menu(lang=lang, **kwargs))
+    keyboard = await mode_aware_main_menu(lang, is_admin=False)
+    await callback.message.answer(t(lang, "order_submitted_client"), reply_markup=keyboard)
     await notify_admins_new_order(bot, order)
 
 
@@ -318,9 +329,7 @@ async def my_orders_history_callback(callback: CallbackQuery, lang: str) -> None
 @router.callback_query(F.data == "myord:back")
 async def my_orders_back(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
     await safe_callback_answer(callback)
-    async with async_session_factory() as session:
-        kwargs = await menu_mode_kwargs(session)
-    await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang, **kwargs))
+    await show_main_menu(callback, lang, is_admin)
 
 
 @router.callback_query(F.data.regexp(r"^myord:view:\d+(?::(active|history))?$"))

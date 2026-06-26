@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.bot.utils.callbacks import safe_callback_answer
-from app.bot.handlers.admin_bookings import show_bookings_hub
+from app.bot.handlers.admin_bookings import show_booking_detail, show_bookings_hub
 from app.bot.utils.menu_helpers import menu_mode_kwargs, mode_aware_admin_menu, show_admin_panel
 from app.bot.utils.telegram_ui import edit_or_send, safe_edit_text
 
@@ -48,12 +48,13 @@ from app.repositories import (
     ServiceRepository,
     SettingsRepository,
 )
+from app.services.admin_bookings_service import parse_admin_confirm_callback
 from app.services.booking_service import BookingService
 from app.services.booking_notification_service import (
     notify_client_booking_cancelled_by_admin,
     schedule_calendar_auth_admin_notify,
 )
-from app.services.language_service import get_user_language
+from app.services.language_service import get_user_language, resolve_client_lang_for_client
 from app.services.service_media_service import build_admin_service_detail
 from app.services.service_modes_service import default_service_type_for_modes, load_service_modes
 from app.utils.formatting import (
@@ -960,9 +961,14 @@ async def admin_confirm_booking(callback: CallbackQuery, is_admin: bool, lang: s
         return
 
     await safe_callback_answer(callback)
-    booking_id = int(callback.data.rsplit(":", 1)[1])
+    try:
+        booking_id, source = parse_admin_confirm_callback(callback.data)
+    except ValueError:
+        await safe_edit_text(callback.message, t(lang, "not_found"))
+        return
     t_total = time.perf_counter()
     t_db = 0.0
+    client = None
     try:
         t0 = time.perf_counter()
         async with async_session_factory() as session:
@@ -973,15 +979,9 @@ async def admin_confirm_booking(callback: CallbackQuery, is_admin: bool, lang: s
     except ValueError:
         await safe_edit_text(callback.message, t(lang, "not_found"))
         return
-    t0 = time.perf_counter()
-    await safe_edit_text(
-        callback.message,
-        f"{t(lang, 'booking_confirmed_admin')}\n{format_booking(booking, service, lang, admin_view=True)}",
-    )
-    t_ui = time.perf_counter() - t0
     t_notify = 0.0
     if client:
-        client_lang = client.language or get_settings().default_language
+        client_lang = await resolve_client_lang_for_client(client)
         try:
             t0 = time.perf_counter()
             await callback.bot.send_message(
@@ -996,10 +996,10 @@ async def admin_confirm_booking(callback: CallbackQuery, is_admin: bool, lang: s
         "admin confirm booking",
         booking_id=booking_id,
         db=t_db,
-        ui=t_ui,
         notify=t_notify,
         total=time.perf_counter() - t_total,
     )
+    await show_booking_detail(callback, lang, booking_id, source)
 
 
 @router.callback_query(F.data.startswith("adm_cancel:"))
@@ -1076,7 +1076,7 @@ async def admin_send_message(message: Message, state: FSMContext, bot: Bot, lang
         await state.clear()
         await message.answer(t(lang, "not_found"), reply_markup=await mode_aware_admin_menu(lang))
         return
-    client_lang = client.language or get_settings().default_language
+    client_lang = await resolve_client_lang_for_client(client)
     try:
         await bot.send_message(
             client.telegram_id,

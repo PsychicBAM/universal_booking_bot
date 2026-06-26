@@ -15,6 +15,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "my_activity_intro": "Choose a section:",
         "my_activity_bookings": "📋 My bookings",
         "my_activity_orders": "🗂 My requests",
+        "back_to_my_activity": "🔙 Back to bookings & requests",
         "my_bookings": "📋 My bookings",
         "contact_admin": "📞 Contact admin",
         "language": "🌐 Language",
@@ -779,8 +780,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "admin_attendance_section_later": "🗓 Later",
         "admin_attendance_no_bookings": "No upcoming bookings for this filter.",
         "admin_attendance_send_question": "🔔 Send confirmation question",
-        "admin_attendance_sent": "✅ Question sent to client.",
-        "admin_attendance_send_failed": "❌ Could not send the question. The client may have blocked the bot.",
+        "admin_attendance_sent": "✅ Confirmation question sent to the client.",
+        "admin_attendance_send_failed": (
+            "Could not send the question to the client. "
+            "The client may not have started the bot or may have blocked it."
+        ),
         "admin_attendance_already_answered_confirm": "Client already responded. Send the question again?",
         "admin_attendance_resend_yes": "✅ Yes, send",
         "admin_attendance_resend_no": "❌ No",
@@ -1295,6 +1299,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "my_activity_intro": "Выберите раздел:",
         "my_activity_bookings": "📋 Мои записи",
         "my_activity_orders": "🗂 Мои заявки",
+        "back_to_my_activity": "🔙 Назад к записям и заявкам",
         "my_bookings": "📋 Мои записи",
         "contact_admin": "📞 Связаться с админом",
         "language": "🌐 Язык",
@@ -2059,8 +2064,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "admin_attendance_section_later": "🗓 Позже",
         "admin_attendance_no_bookings": "Нет подходящих предстоящих записей.",
         "admin_attendance_send_question": "🔔 Отправить вопрос подтверждения",
-        "admin_attendance_sent": "✅ Вопрос отправлен клиенту.",
-        "admin_attendance_send_failed": "❌ Не удалось отправить вопрос. Возможно, клиент заблокировал бота.",
+        "admin_attendance_sent": "✅ Вопрос подтверждения отправлен клиенту.",
+        "admin_attendance_send_failed": (
+            "Не удалось отправить вопрос клиенту. "
+            "Возможно, клиент ещё не открывал бота или заблокировал его."
+        ),
         "admin_attendance_already_answered_confirm": "Клиент уже ответил. Отправить вопрос ещё раз?",
         "admin_attendance_resend_yes": "✅ Да, отправить",
         "admin_attendance_resend_no": "❌ Нет",

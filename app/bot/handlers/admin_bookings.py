@@ -22,6 +22,7 @@ from app.services.admin_bookings_service import (
     BookingDetailSource,
     build_bookings_folder_body,
     build_bookings_hub_body,
+    is_manual_attendance_send_eligible,
     load_bookings_folder,
     load_bookings_hub,
     paginate_bookings_folder,
@@ -30,7 +31,6 @@ from app.services.admin_bookings_service import (
     parse_bookings_view_callback,
     search_bookings,
 )
-from app.services.attendance_service import is_booking_attendance_eligible
 from app.utils.formatting import format_booking
 
 router = Router()
@@ -104,7 +104,7 @@ async def show_booking_detail(
         await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
         return
     username = client.username if client else None
-    show_send = is_booking_attendance_eligible(booking)
+    show_send = is_manual_attendance_send_eligible(booking)
     await safe_edit_text(
         callback.message,
         format_booking(booking, service, lang, admin_view=True, client_username=username),

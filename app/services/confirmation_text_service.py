@@ -98,12 +98,8 @@ def _response_line(booking: Booking, lang: str) -> str:
 
 
 def should_send_attendance_buttons(config: ReminderConfig, reminder_type: str) -> bool:
-    if not config.attendance_confirmation_enabled:
-        return False
-    mode = config.attendance_confirmation_reminder
-    if mode == "both":
-        return True
-    return mode == reminder_type
+    _ = reminder_type
+    return config.attendance_confirmation_enabled
 
 
 def _clean(value: str | None) -> str | None:

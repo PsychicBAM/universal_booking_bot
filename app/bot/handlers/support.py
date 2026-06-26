@@ -6,8 +6,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from app.bot.i18n import t
-from app.bot.keyboards import CONTACT_ADMIN_TEXTS, cancel_kb, main_menu
-from app.bot.utils.menu_helpers import mode_aware_admin_menu, show_admin_panel
+from app.bot.keyboards import CONTACT_ADMIN_TEXTS, cancel_kb
+from app.bot.utils.menu_helpers import mode_aware_admin_menu, mode_aware_main_menu, show_admin_panel, show_main_menu
 from app.bot.keyboards.support_kb import (
     format_request_list_label,
     support_booking_pick_kb,
@@ -199,7 +199,7 @@ async def support_back_main(
         await callback.message.delete()
     except TelegramBadRequest:
         pass
-    await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+    await show_main_menu(callback, lang, is_admin)
 
 
 @router.callback_query(F.data == "sup:back:menu")
@@ -315,7 +315,8 @@ async def client_send_support_message(
             t(lang, "support_no_admin"),
             reply_markup=ReplyKeyboardRemove(),
         )
-        await message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        keyboard = await mode_aware_main_menu(lang, is_admin)
+        await message.answer(t(lang, "main_menu"), reply_markup=keyboard)
         return
 
     data = await state.get_data()
@@ -339,10 +340,12 @@ async def client_send_support_message(
     await state.clear()
     if not sent:
         logger.error("Support message id=%s created but admin notify failed", support_msg.id)
-        await message.answer(t(lang, "support_send_failed"), reply_markup=main_menu(is_admin, lang))
+        keyboard = await mode_aware_main_menu(lang, is_admin)
+        await message.answer(t(lang, "support_send_failed"), reply_markup=keyboard)
         return
 
-    await message.answer(t(lang, "support_request_sent"), reply_markup=main_menu(is_admin, lang))
+    keyboard = await mode_aware_main_menu(lang, is_admin)
+    await message.answer(t(lang, "support_request_sent"), reply_markup=keyboard)
 
 
 @router.callback_query(F.data.regexp(r"^sup:reply:\d+$"))

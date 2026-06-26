@@ -87,6 +87,24 @@ def _check_symbol_imports(app_dir: Path) -> None:
             {"booking_labels.py"},
         ),
         (
+            "list_upcoming_unavailable(",
+            "list_upcoming_unavailable",
+            "app.services.unavailable_service",
+            {"unavailable_service.py"},
+        ),
+        (
+            "resolve_client_lang_for_client(",
+            "resolve_client_lang_for_client",
+            "app.services.language_service",
+            {"language_service.py"},
+        ),
+        (
+            "resolve_client_lang(",
+            "resolve_client_lang",
+            "app.services.language_service",
+            {"language_service.py"},
+        ),
+        (
             "get_settings(",
             "get_settings",
             "app.config",
@@ -2437,6 +2455,469 @@ def main() -> int:
         print("OK: client service type constants and back navigation")
     except Exception as exc:
         print(f"FAIL: client service type constants — {exc}")
+        return 1
+
+    try:
+        import asyncio
+        import inspect
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.bot.handlers import orders as orders_handlers
+        from app.bot.handlers.booking_edit import _detail_options
+        from app.bot.handlers.client import show_my_bookings
+        from app.bot.i18n import t
+        from app.models import BookingStatus
+        from app.services.confirmation_text_service import (
+            ConfirmationTextConfig,
+            should_send_attendance_buttons,
+        )
+        from app.services.language_service import resolve_client_lang
+        from app.services.reminder_service import ReminderService
+        from app.services.reminder_settings import ReminderConfig
+        from app.utils.datetime_utils import now_local
+
+        show_src = inspect.getsource(show_my_bookings)
+        if "event.from_user.id" not in show_src:
+            raise AssertionError("test A — show_my_bookings must use event.from_user.id")
+        orders_src = inspect.getsource(orders_handlers.my_activity_bookings)
+        if "show_my_bookings(callback" not in orders_src:
+            raise AssertionError("test B — my_activity_bookings must call show_my_bookings(callback, ...)")
+
+        repo_src = (ROOT / "app" / "repositories" / "__init__.py").read_text(encoding="utf-8")
+        list_start = repo_src.find("async def list_for_client(self, client_id: int) -> list[Booking]:")
+        list_block = repo_src[list_start : list_start + 400]
+        if "attendance_status" in list_block:
+            raise AssertionError("test C — list_for_client must not filter by attendance_status")
+
+        service = SimpleNamespace(requires_location=True, ask_client_comment=True)
+        future_booking = SimpleNamespace(
+            status=BookingStatus.CONFIRMED,
+            start_at=now_local() + timedelta(hours=3),
+        )
+        past_booking = SimpleNamespace(
+            status=BookingStatus.CONFIRMED,
+            start_at=now_local() - timedelta(hours=1),
+        )
+        cancelled_booking = SimpleNamespace(
+            status=BookingStatus.CANCELLED,
+            start_at=now_local() + timedelta(hours=3),
+        )
+        close_future = SimpleNamespace(
+            status=BookingStatus.CONFIRMED,
+            start_at=now_local() + timedelta(minutes=51),
+        )
+        future_opts = _detail_options(future_booking, service, 2)
+        if not future_opts["can_cancel"] or not future_opts["can_reschedule"]:
+            raise AssertionError("test D — future active booking must show action buttons")
+        close_opts = _detail_options(close_future, service, 2)
+        if not close_opts["can_cancel"] or not close_opts["can_reschedule"]:
+            raise AssertionError("test D — near-future booking must still show action buttons")
+        past_opts = _detail_options(past_booking, service, 2)
+        if past_opts["can_cancel"] or past_opts["can_reschedule"]:
+            raise AssertionError("test E — past booking must hide action buttons")
+        cancelled_opts = _detail_options(cancelled_booking, service, 2)
+        if cancelled_opts["can_cancel"] or cancelled_opts["can_reschedule"]:
+            raise AssertionError("test F — cancelled booking must hide action buttons")
+
+        client_ru = SimpleNamespace(language=None)
+        client_en = SimpleNamespace(language="en")
+        if resolve_client_lang(client_ru, enabled_languages=["ru"], default_language="ru") != "ru":
+            raise AssertionError("test K — default language must be used when client language unset")
+        if resolve_client_lang(client_en, enabled_languages=["ru"], default_language="ru") != "ru":
+            raise AssertionError("test K — must not use unsupported client language when default is ru")
+        ru_text = t("ru", "attendance_reminder_title")
+        if "Подтверждение" not in ru_text:
+            raise AssertionError("test L — Russian reminder title missing")
+
+        enabled_cfg = ReminderConfig(
+            enabled=True,
+            test_mode=False,
+            client_reminder_1_minutes=1440,
+            client_reminder_2_minutes=60,
+            admin_reminder_minutes=60,
+            test_client_reminder_minutes=5,
+            test_admin_reminder_minutes=3,
+            attendance_confirmation_enabled=True,
+            attendance_confirmation_reminder="client_1",
+        )
+        disabled_cfg = ReminderConfig(
+            enabled=True,
+            test_mode=False,
+            client_reminder_1_minutes=1440,
+            client_reminder_2_minutes=60,
+            admin_reminder_minutes=60,
+            test_client_reminder_minutes=5,
+            test_admin_reminder_minutes=3,
+            attendance_confirmation_enabled=False,
+            attendance_confirmation_reminder="client_1",
+        )
+        if not should_send_attendance_buttons(enabled_cfg, "client_2"):
+            raise AssertionError("test I — attendance enabled reminders must include buttons")
+        if should_send_attendance_buttons(disabled_cfg, "client_1"):
+            raise AssertionError("test J — attendance disabled reminders must not include buttons")
+
+        async def _run_reminder_tests() -> None:
+            bot = AsyncMock()
+            bot.send_message = AsyncMock()
+            service_obj = ReminderService(bot)
+            booking = SimpleNamespace(
+                id=99,
+                client_id=1,
+                service_id=1,
+                start_at=now_local() + timedelta(minutes=59),
+                client_name="Test",
+                client_phone=None,
+                location_text=None,
+                service_location_title=None,
+                service_location_address=None,
+                client_comment=None,
+                attendance_status=None,
+                client_reminder_1_sent_at=None,
+                client_reminder_2_sent_at=None,
+                admin_reminder_sent_at=None,
+            )
+            client = SimpleNamespace(id=1, telegram_id=12345, language=None)
+            text_config = ConfirmationTextConfig(values={})
+            with patch.object(
+                service_obj,
+                "resolve_client_lang_for_client",
+                new=AsyncMock(return_value="ru"),
+                create=True,
+            ):
+                with patch(
+                    "app.services.reminder_service.resolve_client_lang_for_client",
+                    new=AsyncMock(return_value="ru"),
+                ):
+                    client_ok = await service_obj._send_client_reminder(
+                        booking,
+                        client,
+                        "ru",
+                        "Урок",
+                        "01.01.2026 18:00",
+                        now_local(),
+                        enabled_cfg,
+                        text_config,
+                        "client_2",
+                    )
+            if not client_ok:
+                raise AssertionError("test G — client reminder send failed")
+            if bot.send_message.await_count != 1:
+                raise AssertionError("test G — client reminder must call send_message once")
+            sent_kwargs = bot.send_message.await_args.kwargs
+            if sent_kwargs.get("reply_markup") is None:
+                raise AssertionError("test I — attendance enabled client reminder must include keyboard")
+
+            bot.send_message.reset_mock()
+            simple_ok = await service_obj._send_client_reminder(
+                booking,
+                client,
+                "ru",
+                "Урок",
+                "01.01.2026 18:00",
+                now_local(),
+                disabled_cfg,
+                text_config,
+                "client_2",
+            )
+            if not simple_ok:
+                raise AssertionError("test J — simple client reminder send failed")
+            if bot.send_message.await_args.kwargs.get("reply_markup") is not None:
+                raise AssertionError("test J — attendance disabled client reminder must not include keyboard")
+
+            bot.send_message.reset_mock()
+            with patch(
+                "app.services.reminder_service.get_user_language",
+                new=AsyncMock(return_value="ru"),
+            ):
+                admin_ok = await service_obj._send_admin_reminder_messages(
+                    booking,
+                    "Урок",
+                    "01.01.2026 18:00",
+                    mark_sent=False,
+                )
+            if not admin_ok:
+                raise AssertionError("test M — admin reminder send failed")
+            if bot.send_message.await_count < 1:
+                raise AssertionError("test H/M — admin reminder must send independently")
+
+        asyncio.run(_run_reminder_tests())
+        print("OK: client bookings visibility, reminders, and language (tests A–M)")
+    except Exception as exc:
+        print(f"FAIL: client bookings/reminders — {exc}")
+        return 1
+
+    try:
+        import asyncio
+        import inspect
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.bot.handlers.schedule import build_schedule_main_text
+        from app.bot.keyboards import bookings_kb, my_bookings_back_kb
+        from app.bot.keyboards.admin_bookings_kb import admin_booking_detail_kb, admin_bookings_folder_kb
+        from app.models import BookingStatus
+        from app.services.admin_bookings_service import BookingDetailSource, is_manual_attendance_send_eligible
+        from app.services.language_service import resolve_client_lang_for_client
+        from app.utils.datetime_utils import now_local
+
+        schedule_src = (ROOT / "app" / "bot" / "handlers" / "schedule.py").read_text(encoding="utf-8")
+        if "list_upcoming_unavailable" not in schedule_src:
+            raise AssertionError("test A — schedule.py must use list_upcoming_unavailable")
+        if "from app.services.unavailable_service import list_upcoming_unavailable" not in schedule_src:
+            raise AssertionError("test A — schedule.py must import list_upcoming_unavailable")
+
+        async def _build_schedule_text() -> str:
+            with patch(
+                "app.bot.handlers.schedule.get_weekly_schedule",
+                new=AsyncMock(return_value={}),
+            ), patch(
+                "app.bot.handlers.schedule.breaks_by_weekday",
+                new=AsyncMock(return_value={}),
+            ), patch(
+                "app.bot.handlers.schedule.list_upcoming_unavailable",
+                new=AsyncMock(return_value=[]),
+            ):
+                return await build_schedule_main_text("ru")
+
+        text = asyncio.run(_build_schedule_text())
+        if not isinstance(text, str) or "Расписание" not in text and "Schedule" not in text:
+            raise AssertionError("test B — build_schedule_main_text must return schedule text")
+
+        fixed_now = now_local()
+        booking_confirmed = SimpleNamespace(
+            id=10,
+            status=BookingStatus.CONFIRMED,
+            start_at=fixed_now + timedelta(hours=2),
+            service_id=1,
+            client_id=1,
+        )
+        booking_pending = SimpleNamespace(
+            id=11,
+            status=BookingStatus.PENDING,
+            start_at=fixed_now + timedelta(hours=2),
+            service_id=1,
+            client_id=1,
+        )
+        booking_cancelled = SimpleNamespace(
+            id=12,
+            status=BookingStatus.CANCELLED,
+            start_at=fixed_now + timedelta(hours=2),
+            service_id=1,
+            client_id=1,
+        )
+        booking_past = SimpleNamespace(
+            id=13,
+            status=BookingStatus.CONFIRMED,
+            start_at=fixed_now - timedelta(hours=1),
+            service_id=1,
+            client_id=1,
+        )
+        source = BookingDetailSource(section="active", page=0)
+        confirmed_kb = admin_booking_detail_kb(booking_confirmed, source, lang="ru")
+        pending_kb = admin_booking_detail_kb(booking_pending, source, lang="ru")
+        cancelled_kb = admin_booking_detail_kb(booking_cancelled, source, lang="ru")
+        past_kb = admin_booking_detail_kb(booking_past, source, lang="ru")
+        confirmed_callbacks = [btn.callback_data for row in confirmed_kb.inline_keyboard for btn in row]
+        pending_callbacks = [btn.callback_data for row in pending_kb.inline_keyboard for btn in row]
+        cancelled_callbacks = [btn.callback_data for row in cancelled_kb.inline_keyboard for btn in row]
+        past_callbacks = [btn.callback_data for row in past_kb.inline_keyboard for btn in row]
+        if not any(cb and cb.startswith("adm_att:send:") for cb in confirmed_callbacks):
+            raise AssertionError("test C — confirmed future booking must include manual attendance button")
+        if any(cb and cb.startswith("adm_att:send:") for cb in pending_callbacks):
+            raise AssertionError("test D — pending booking must not include manual attendance button")
+        if any(cb and cb.startswith("adm_att:send:") for cb in cancelled_callbacks + past_callbacks):
+            raise AssertionError("test E — cancelled/past booking must not include manual attendance button")
+
+        attendance_src = inspect.getsource(
+            __import__("app.services.admin_attendance_service", fromlist=["send_attendance_question_to_client"])
+        )
+        if "resolve_client_lang_for_client" not in attendance_src:
+            raise AssertionError("test F — manual attendance send must use resolve_client_lang_for_client")
+
+        mark_src = inspect.getsource(
+            __import__("app.services.admin_attendance_service", fromlist=["mark_manual_attendance_sent"])
+        )
+        for forbidden in ("client_reminder_1_sent_at", "client_reminder_2_sent_at", "admin_reminder_sent_at"):
+            if forbidden in mark_src:
+                raise AssertionError(f"test G — manual attendance must not set {forbidden}")
+
+        bookings_keyboard = bookings_kb([], "ru")
+        back_callbacks = [btn.callback_data for row in bookings_keyboard.inline_keyboard for btn in row]
+        if "my:back:main" not in back_callbacks:
+            raise AssertionError("test H — client My bookings list must include back button")
+        hub_back = my_bookings_back_kb("ru", from_activity_hub=True)
+        hub_back_callbacks = [btn.callback_data for row in hub_back.inline_keyboard for btn in row]
+        if "myact:hub" not in hub_back_callbacks:
+            raise AssertionError("test H — hub My bookings back must return to activity hub")
+
+        folder_kb = admin_bookings_folder_kb([], "active", 0, 1, "ru")
+        folder_callbacks = [btn.callback_data for row in folder_kb.inline_keyboard for btn in row]
+        if "adm_book:hub" not in folder_callbacks:
+            raise AssertionError("test I — admin bookings folder must include back to bookings hub")
+
+        repo_src = (ROOT / "app" / "repositories" / "__init__.py").read_text(encoding="utf-8")
+        list_start = repo_src.find("async def list_for_client(self, client_id: int) -> list[Booking]:")
+        list_block = repo_src[list_start : list_start + 400]
+        if "attendance_status" in list_block:
+            raise AssertionError("test J — My bookings must not filter by attendance_status")
+
+        if not is_manual_attendance_send_eligible(booking_confirmed, now=fixed_now):
+            raise AssertionError("test C helper — confirmed future booking must be manual-send eligible")
+        if is_manual_attendance_send_eligible(booking_pending, now=fixed_now):
+            raise AssertionError("test D helper — pending booking must not be manual-send eligible")
+
+        if resolve_client_lang_for_client is None:
+            raise AssertionError("test F — resolve_client_lang_for_client must be importable")
+
+        print("OK: manual attendance, schedule import, and back buttons (tests A–J)")
+    except Exception as exc:
+        print(f"FAIL: manual attendance / schedule / back buttons — {exc}")
+        return 1
+
+    try:
+        import asyncio
+        import inspect
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.bot.handlers import booking_edit as booking_edit_handlers
+        from app.bot.handlers import start as start_handlers
+        from app.bot.i18n import t
+        from app.bot.keyboards import main_menu
+        from app.bot.keyboards.admin_bookings_kb import admin_booking_detail_kb
+        from app.bot.utils.menu_helpers import mode_aware_main_menu, show_main_menu
+        from app.models import BookingStatus
+        from app.services.admin_bookings_service import (
+            BookingDetailSource,
+            parse_admin_confirm_callback,
+        )
+        from app.utils.datetime_utils import now_local
+
+        client_both = {
+            btn.text for row in main_menu("ru", booking_enabled=True, order_enabled=True).keyboard for btn in row
+        }
+        for label in (
+            t("ru", "main_menu_services"),
+            t("ru", "main_menu_my_activity"),
+            t("ru", "contact_admin"),
+        ):
+            if label not in client_both:
+                raise AssertionError("test A — both modes menu missing compact button")
+        for forbidden in (
+            t("ru", "book_appointment"),
+            t("ru", "my_bookings"),
+            t("ru", "order_services_button"),
+            t("ru", "my_orders_button"),
+        ):
+            if forbidden in client_both:
+                raise AssertionError(f"test A — both modes menu must not show {forbidden}")
+
+        client_booking = {
+            btn.text for row in main_menu("ru", booking_enabled=True, order_enabled=False).keyboard for btn in row
+        }
+        if t("ru", "book_appointment") not in client_booking or t("ru", "my_bookings") not in client_booking:
+            raise AssertionError("test B — booking-only menu missing booking buttons")
+        if t("ru", "order_services_button") in client_booking or t("ru", "my_orders_button") in client_booking:
+            raise AssertionError("test B — booking-only menu must not show order buttons")
+
+        client_order = {
+            btn.text for row in main_menu("ru", booking_enabled=False, order_enabled=True).keyboard for btn in row
+        }
+        if t("ru", "order_services_button") not in client_order or t("ru", "my_orders_button") not in client_order:
+            raise AssertionError("test C — order-only menu missing order buttons")
+        if t("ru", "book_appointment") in client_order or t("ru", "my_bookings") in client_order:
+            raise AssertionError("test C — order-only menu must not show booking buttons")
+
+        cancel_src = inspect.getsource(booking_edit_handlers.my_cancel_booking)
+        if "show_main_menu" not in cancel_src:
+            raise AssertionError("test D — booking cancel must use show_main_menu")
+
+        back_main_src = inspect.getsource(start_handlers.back_main)
+        if "show_main_menu" not in back_main_src:
+            raise AssertionError("test E — back_main must use show_main_menu")
+        orders_src = (ROOT / "app" / "bot" / "handlers" / "orders.py").read_text(encoding="utf-8")
+        if "myact:back" in orders_src and "show_main_menu(callback" not in orders_src:
+            raise AssertionError("test E — myact:back must use show_main_menu")
+
+        fixed_now = now_local()
+        source = BookingDetailSource(section="active", page=0)
+        pending = SimpleNamespace(
+            id=20,
+            status=BookingStatus.PENDING,
+            start_at=fixed_now + timedelta(hours=2),
+            service_id=1,
+            client_id=1,
+        )
+        confirmed = SimpleNamespace(
+            id=21,
+            status=BookingStatus.CONFIRMED,
+            start_at=fixed_now + timedelta(hours=2),
+            service_id=1,
+            client_id=1,
+        )
+        pending_kb = admin_booking_detail_kb(pending, source, lang="ru")
+        confirmed_kb = admin_booking_detail_kb(confirmed, source, lang="ru")
+        pending_cbs = [btn.callback_data for row in pending_kb.inline_keyboard for btn in row]
+        confirmed_cbs = [btn.callback_data for row in confirmed_kb.inline_keyboard for btn in row]
+        if any(cb and cb.startswith("adm_att:send:") for cb in pending_cbs):
+            raise AssertionError("test F — pending booking must not show manual attendance button")
+        if not any(cb and cb.startswith("adm_att:send:") for cb in confirmed_cbs):
+            raise AssertionError("test G — confirmed future booking must show manual attendance button")
+
+        confirm_cb = next(cb for cb in pending_cbs if cb and cb.startswith("adm_confirm:"))
+        parsed_id, parsed_source = parse_admin_confirm_callback(confirm_cb)
+        if parsed_id != 20 or parsed_source.section != "active":
+            raise AssertionError("test H — confirm callback must preserve back context")
+
+        admin_src = (ROOT / "app" / "bot" / "handlers" / "admin.py").read_text(encoding="utf-8")
+        if "show_booking_detail" not in admin_src or "parse_admin_confirm_callback" not in admin_src:
+            raise AssertionError("test H — admin confirm must refresh booking detail with context")
+
+        cancelled = SimpleNamespace(
+            id=22,
+            status=BookingStatus.CANCELLED,
+            start_at=fixed_now + timedelta(hours=2),
+            service_id=1,
+            client_id=1,
+        )
+        past = SimpleNamespace(
+            id=23,
+            status=BookingStatus.CONFIRMED,
+            start_at=fixed_now - timedelta(hours=1),
+            service_id=1,
+            client_id=1,
+        )
+        for booking in (cancelled, past):
+            cbs = [
+                btn.callback_data
+                for row in admin_booking_detail_kb(booking, source, lang="ru").inline_keyboard
+                for btn in row
+            ]
+            if any(cb and cb.startswith("adm_att:send:") for cb in cbs):
+                raise AssertionError("test I — cancelled/past booking must not show manual attendance button")
+
+        async def _mode_aware_menu_smoke() -> None:
+            session = MagicMock()
+            with patch(
+                "app.bot.utils.menu_helpers.menu_mode_kwargs",
+                new=AsyncMock(return_value={"booking_enabled": True, "order_enabled": True}),
+            ):
+                kb = await mode_aware_main_menu("ru", False, session)
+            labels = {btn.text for row in kb.keyboard for btn in row}
+            if t("ru", "main_menu_my_activity") not in labels:
+                raise AssertionError("mode_aware_main_menu must load both modes")
+
+        asyncio.run(_mode_aware_menu_smoke())
+        if show_main_menu is None or mode_aware_main_menu is None:
+            raise AssertionError("mode-aware menu helpers must be importable")
+
+        print("OK: mode-aware client main menu and admin confirm refresh (tests A–I)")
+    except Exception as exc:
+        print(f"FAIL: mode-aware client menu — {exc}")
         return 1
 
     try:

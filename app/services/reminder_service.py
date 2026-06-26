@@ -16,8 +16,14 @@ from app.services.attendance_service import (
     format_attendance_reminder_text,
 )
 from app.services.confirmation_text_service import load_confirmation_text_config
-from app.services.language_service import get_user_language
-from app.services.reminder_diagnostics import reminder_flags_summary_for_log, reminder_was_sent
+from app.services.language_service import get_user_language, resolve_client_lang_for_client
+from app.services.reminder_diagnostics import (
+    evaluate_admin_reminder,
+    evaluate_client_reminder_1,
+    evaluate_client_reminder_2,
+    reminder_flags_summary_for_log,
+    reminder_was_sent,
+)
 from app.services.reminder_matching import is_reminder_due, reminder_window_label
 from app.services.reminder_settings import ReminderConfig, load_reminder_config
 from app.utils.datetime_utils import now_local, to_local_naive
@@ -125,6 +131,41 @@ class ReminderService:
             booking.attendance_status or "none",
         )
 
+    def _log_booking_reminder_diagnostics(
+        self,
+        booking: Booking,
+        client: Client,
+        delta_minutes: float,
+        now: datetime,
+        config: ReminderConfig,
+        client_lang: str,
+    ) -> None:
+        if delta_minutes > REMINDER_LOG_LOOKAHEAD_MINUTES:
+            return
+        c1 = evaluate_client_reminder_1(delta_minutes, config, booking)
+        c2 = evaluate_client_reminder_2(delta_minutes, config, booking)
+        adm = evaluate_admin_reminder(delta_minutes, config, booking)
+        telegram_id = client.telegram_id
+        logger.info(
+            "Reminder diagnostics booking_id=%s client_telegram_id=%s client_lang=%s "
+            "starts_in=%.1fmin attendance_enabled=%s "
+            "client_r1_due=%s client_r1_reason=%s "
+            "client_r2_due=%s client_r2_reason=%s "
+            "admin_due=%s admin_reason=%s flags=%s",
+            booking.id,
+            telegram_id if telegram_id else "MISSING",
+            client_lang,
+            delta_minutes,
+            config.attendance_confirmation_enabled,
+            c1.due,
+            c1.reason,
+            c2.due,
+            c2.reason,
+            adm.due,
+            adm.reason,
+            reminder_flags_summary_for_log(booking),
+        )
+
     def _log_skip(self, booking_id: int, reason: str, **extra) -> None:
         parts = [f"Skip booking_id={booking_id} reason={reason}"]
         for key, value in extra.items():
@@ -154,13 +195,22 @@ class ReminderService:
                 self._log_skip(booking.id, "client not found")
             return
 
+        client_lang = await resolve_client_lang_for_client(client)
+
         if log_details:
             self._log_booking_candidate(booking, delta_minutes)
+            self._log_booking_reminder_diagnostics(
+                booking,
+                client,
+                delta_minutes,
+                now,
+                config,
+                client_lang,
+            )
 
         service = await ServiceRepository(session).get_by_id(booking.service_id)
         service_name = service.name if service else f"#{booking.service_id}"
         date_time = format_datetime(start_at)
-        client_lang = client.language or self.settings.default_language
 
         if config.test_mode:
             await self._maybe_send_client_test_reminder(
@@ -226,7 +276,7 @@ class ReminderService:
             service_name = service.name if service else f"#{booking.service_id}"
             start_at = to_local_naive(booking.start_at)
             date_time = format_datetime(start_at)
-            client_lang = client.language or self.settings.default_language
+            client_lang = await resolve_client_lang_for_client(client)
             now = now_local()
 
             client_ok = await self._send_client_reminder(
@@ -461,6 +511,12 @@ class ReminderService:
         text_config,
         reminder_type: str,
     ) -> bool:
+        if not client.telegram_id:
+            logger.warning(
+                "Cannot send client reminder for booking_id=%s: client telegram_id missing",
+                booking.id,
+            )
+            return False
         use_attendance = config.attendance_confirmation_enabled
         if use_attendance:
             text = format_attendance_reminder_text(

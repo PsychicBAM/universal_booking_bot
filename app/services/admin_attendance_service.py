@@ -20,6 +20,7 @@ from app.services.confirmation_text_service import (
     build_booking_confirmation_message,
     load_confirmation_text_config,
 )
+from app.services.language_service import resolve_client_lang_for_client
 from app.utils.datetime_utils import now_local, to_local_naive
 from app.utils.formatting import format_datetime
 
@@ -179,7 +180,7 @@ async def send_attendance_question_to_client(
     manual: bool = False,
 ) -> bool:
     config = await load_confirmation_text_config(session)
-    client_lang = client.language or "ru"
+    client_lang = await resolve_client_lang_for_client(client)
     date_time = format_datetime(booking.start_at)
     text = format_attendance_question_text(
         booking,

@@ -12,9 +12,8 @@ from app.bot.keyboards import (
     BACK_MAIN_TEXTS,
     LANGUAGE_TEXTS,
     language_kb,
-    main_menu,
 )
-from app.bot.utils.menu_helpers import menu_mode_kwargs, show_admin_panel
+from app.bot.utils.menu_helpers import mode_aware_main_menu, show_admin_panel, show_main_menu
 from app.database.session import async_session_factory
 from app.repositories import ClientRepository
 from app.services.language_service import effective_lang, parse_enabled_languages_value
@@ -48,9 +47,7 @@ async def open_admin(message: Message, is_admin: bool, lang: str) -> None:
 
 @router.message(F.text.in_(BACK_MAIN_TEXTS))
 async def back_main(message: Message, is_admin: bool, lang: str) -> None:
-    async with async_session_factory() as session:
-        kwargs = await menu_mode_kwargs(session)
-    await message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang, **kwargs))
+    await show_main_menu(message, lang, is_admin)
 
 
 @router.message(F.text.in_(LANGUAGE_TEXTS))
@@ -63,7 +60,10 @@ async def choose_language(
 ) -> None:
     if not language_switching_enabled:
         forced = effective_lang(lang, enabled_languages, lang)
-        await message.answer(t(forced, "language_switching_disabled"), reply_markup=main_menu(is_admin, forced))
+        from app.bot.utils.menu_helpers import mode_aware_main_menu
+
+        keyboard = await mode_aware_main_menu(forced, is_admin)
+        await message.answer(t(forced, "language_switching_disabled"), reply_markup=keyboard)
         return
     await message.answer(t(lang, "language_choose"), reply_markup=language_kb(enabled_languages))
 
@@ -81,11 +81,11 @@ async def set_language(
     if not language_switching_enabled or new_lang not in codes:
         forced = effective_lang(lang, codes, lang)
         await safe_callback_answer(callback, t(forced, "language_switching_disabled"), show_alert=True)
-        await callback.message.answer(t(forced, "main_menu"), reply_markup=main_menu(is_admin, forced))
+        await show_main_menu(callback, forced, is_admin)
         return
     async with async_session_factory() as session:
         await ClientRepository(session).set_language(callback.from_user.id, new_lang)
         await session.commit()
     await safe_edit_text(callback.message, t(new_lang, "language_set"))
-    await callback.message.answer(t(new_lang, "main_menu"), reply_markup=main_menu(is_admin, new_lang))
+    await show_main_menu(callback, new_lang, is_admin)
     await safe_callback_answer(callback)

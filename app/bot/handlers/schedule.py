@@ -13,6 +13,7 @@ from app.database.session import async_session_factory
 from app.repositories import WorkingBreakRepository
 from app.services.service_modes_service import load_service_modes
 from app.bot.utils.menu_helpers import show_admin_panel
+from app.services.unavailable_service import list_upcoming_unavailable
 from app.services.working_break_service import breaks_by_weekday
 from app.services.working_hours_service import get_weekly_schedule
 

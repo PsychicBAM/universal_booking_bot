@@ -5,7 +5,7 @@ import logging
 
 from app.bot.utils.callbacks import safe_callback_answer
 from app.bot.i18n import t
-from app.bot.keyboards import main_menu
+from app.bot.utils.menu_helpers import show_main_menu
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ async def _expired_session(callback: CallbackQuery, state: FSMContext, is_admin:
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
-    await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+    await show_main_menu(callback, lang, is_admin)
 
 
 @router.callback_query(F.data.regexp(r"^date:\d{4}-\d{2}-\d{2}$"))

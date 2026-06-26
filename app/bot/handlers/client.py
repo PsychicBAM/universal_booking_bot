@@ -27,7 +27,7 @@ from app.bot.keyboards import (
     bookings_kb,
     cancel_kb,
     dates_kb,
-    main_menu,
+    my_bookings_back_kb,
     services_kb,
     skip_cancel_kb,
 )
@@ -75,6 +75,7 @@ from app.services.availability_service import AvailabilityService
 from app.services.booking_service import BookingService
 from app.services.exceptions import SlotUnavailableError
 from app.services.calendar_service import CalendarService
+from app.bot.utils.menu_helpers import show_main_menu
 from app.services.language_service import get_user_language
 from app.utils.datetime_utils import now_local, slot_from_timestamp, to_local_naive
 from app.utils.formatting import format_booking, format_date, format_datetime, format_service, format_time
@@ -1085,7 +1086,7 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, is_admin: 
     if not service_id or slot_ts is None or not client_name:
         await state.clear()
         await edit_or_send(callback, t(lang, "session_expired"))
-        await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        await show_main_menu(callback, lang, is_admin)
         return
 
     slot = slot_from_timestamp(slot_ts)
@@ -1119,18 +1120,18 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, is_admin: 
     except SlotUnavailableError:
         await edit_or_send(callback, t(lang, "slot_unavailable"))
         await state.clear()
-        await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        await show_main_menu(callback, lang, is_admin)
         return
     except ValueError:
         await edit_or_send(callback, t(lang, "slot_unavailable"))
         await state.clear()
-        await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        await show_main_menu(callback, lang, is_admin)
         return
     except Exception:
         logger.exception("Booking confirmation failed for user %s", callback.from_user.id)
         await edit_or_send(callback, t(lang, "error_generic"))
         await state.clear()
-        await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+        await show_main_menu(callback, lang, is_admin)
         return
 
     if booking.status.value == "confirmed":
@@ -1159,7 +1160,7 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, is_admin: 
         total=t_db + t_ui + t_notify,
     )
     await state.clear()
-    await callback.message.answer(t(lang, "main_menu"), reply_markup=main_menu(is_admin, lang))
+    await show_main_menu(callback, lang, is_admin)
 
 
 async def _booking_service_names(
@@ -1178,36 +1179,64 @@ async def _booking_service_names(
     return names
 
 
-@router.message(F.text.in_(MY_BOOKINGS_TEXTS))
-async def my_bookings(message: Message, lang: str) -> None:
+async def show_my_bookings(
+    event: Message | CallbackQuery,
+    lang: str,
+    *,
+    from_activity_hub: bool = False,
+) -> None:
+    """List active client bookings. Always uses the Telegram user id, not the bot message sender."""
+    telegram_id = event.from_user.id
+    back_callback = "myact:hub" if from_activity_hub else "my:back:main"
+    back_label_key = "back_to_my_activity" if from_activity_hub else "back_main"
+    back_kb = my_bookings_back_kb(lang, from_activity_hub=from_activity_hub)
     async with async_session_factory() as session:
-        client = await ClientRepository(session).get_by_telegram_id(message.from_user.id)
+        client = await ClientRepository(session).get_by_telegram_id(telegram_id)
         if not client:
-            await message.answer(t(lang, "no_bookings_yet"))
+            empty_text = t(lang, "no_bookings_yet")
+            if isinstance(event, CallbackQuery):
+                await edit_or_send(event, empty_text, reply_markup=back_kb)
+            else:
+                await event.answer(empty_text, reply_markup=back_kb)
             return
         bookings = await BookingRepository(session).list_for_client(client.id)
         service_names = await _booking_service_names(session, bookings, lang)
     if not bookings:
-        await message.answer(t(lang, "my_bookings_empty"))
+        empty_text = t(lang, "my_bookings_empty")
+        if isinstance(event, CallbackQuery):
+            await edit_or_send(event, empty_text, reply_markup=back_kb)
+        else:
+            await event.answer(empty_text, reply_markup=back_kb)
         return
-    await message.answer(
-        t(lang, "my_bookings_title"),
-        reply_markup=bookings_kb(bookings, lang, service_names),
+    text = t(lang, "my_bookings_title")
+    keyboard = bookings_kb(
+        bookings,
+        lang,
+        service_names,
+        back_callback=back_callback,
+        back_label_key=back_label_key,
     )
+    if isinstance(event, CallbackQuery):
+        await edit_or_send(event, text, reply_markup=keyboard)
+    else:
+        await event.answer(text, reply_markup=keyboard)
+
+
+@router.callback_query(F.data == "my:back:main")
+async def my_bookings_back_main(callback: CallbackQuery, is_admin: bool, lang: str) -> None:
+    await safe_callback_answer(callback)
+    await show_main_menu(callback, lang, is_admin)
+
+
+@router.message(F.text.in_(MY_BOOKINGS_TEXTS))
+async def my_bookings(message: Message, state: FSMContext, lang: str) -> None:
+    await state.update_data(my_bookings_from_hub=False)
+    await show_my_bookings(message, lang, from_activity_hub=False)
 
 
 @router.callback_query(F.data == "my_bookings")
-async def my_bookings_cb(callback: CallbackQuery, lang: str) -> None:
+async def my_bookings_cb(callback: CallbackQuery, state: FSMContext, lang: str) -> None:
     await safe_callback_answer(callback)
-    async with async_session_factory() as session:
-        client = await ClientRepository(session).get_by_telegram_id(callback.from_user.id)
-        bookings = await BookingRepository(session).list_for_client(client.id) if client else []
-        service_names = await _booking_service_names(session, bookings, lang) if bookings else {}
-    if not bookings:
-        await edit_or_send(callback, t(lang, "my_bookings_empty"))
-        return
-    await edit_or_send(
-        callback,
-        t(lang, "my_bookings_title"),
-        reply_markup=bookings_kb(bookings, lang, service_names),
-    )
+    data = await state.get_data()
+    from_hub = bool(data.get("my_bookings_from_hub"))
+    await show_my_bookings(callback, lang, from_activity_hub=from_hub)

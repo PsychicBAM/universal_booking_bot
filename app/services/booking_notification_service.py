@@ -9,7 +9,7 @@ from aiogram import Bot
 
 from app.config import get_settings
 from app.models import Booking, Service, ServiceOrder
-from app.services.language_service import get_user_language
+from app.services.language_service import get_user_language, resolve_client_lang_for_client
 from app.utils.formatting import (
     format_booking_cancelled_by_admin_client_notification,
     format_booking_rescheduled_by_client_admin_notification,
@@ -152,7 +152,7 @@ async def notify_client_booking_cancelled_by_admin(
         client = await session.get(Client, booking.client_id)
     if not client:
         return
-    client_lang = client.language or get_settings().default_language
+    client_lang = await resolve_client_lang_for_client(client)
     text = format_booking_cancelled_by_admin_client_notification(booking, service, client_lang)
     try:
         await bot.send_message(client.telegram_id, text)
@@ -187,7 +187,7 @@ async def notify_client_order_cancelled_by_admin(
         client = await session.get(Client, order.client_id)
     if not client:
         return
-    client_lang = client.language or get_settings().default_language
+    client_lang = await resolve_client_lang_for_client(client)
     text = format_order_cancelled_by_admin_client_notification(order, service, client_lang)
     try:
         await bot.send_message(client.telegram_id, text)

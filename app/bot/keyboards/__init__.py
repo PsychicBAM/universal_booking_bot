@@ -186,6 +186,9 @@ def bookings_kb(
     bookings: list[Booking],
     lang: str = "ru",
     service_names: dict[int, str] | None = None,
+    *,
+    back_callback: str = "my:back:main",
+    back_label_key: str = "back_main",
 ) -> InlineKeyboardMarkup:
     from app.bot.utils.booking_labels import format_client_booking_button
 
@@ -205,7 +208,28 @@ def bookings_kb(
     ]
     if not buttons:
         buttons = [[InlineKeyboardButton(text="—", callback_data="noop")]]
+    buttons.append(
+        [InlineKeyboardButton(text=t(lang, back_label_key), callback_data=back_callback)]
+    )
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def my_bookings_back_kb(
+    lang: str = "ru",
+    *,
+    from_activity_hub: bool = False,
+) -> InlineKeyboardMarkup:
+    if from_activity_hub:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=t(lang, "back_to_my_activity"), callback_data="myact:hub")]
+            ]
+        )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=t(lang, "back_main"), callback_data="my:back:main")]
+        ]
+    )
 
 
 def booking_actions_kb(booking_id: int, can_cancel: bool = True, lang: str = "ru") -> InlineKeyboardMarkup:

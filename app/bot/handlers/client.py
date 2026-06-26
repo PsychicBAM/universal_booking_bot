@@ -477,21 +477,9 @@ async def _show_time_grid_for_period(
 
 
 async def _notify_admins_new_booking(bot, booking, service, lang: str) -> None:
-    settings = get_settings()
-    async with async_session_factory() as session:
-        from app.models import Client
+    from app.services.booking_notification_service import notify_admins_new_booking
 
-        client = await session.get(Client, booking.client_id)
-        username = client.username if client else None
-    for admin_id in settings.admin_ids:
-        admin_lang = await get_user_language(admin_id)
-        try:
-            await bot.send_message(
-                admin_id,
-                f"{t(admin_lang, 'new_booking_admin')}\n\n{format_booking(booking, service, admin_lang, admin_view=True, client_username=username)}",
-            )
-        except Exception:
-            pass
+    await notify_admins_new_booking(bot, booking, service)
 
 
 @router.message(F.text.in_(MAIN_MENU_SERVICES_TEXTS))

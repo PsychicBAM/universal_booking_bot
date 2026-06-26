@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
+from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.i18n import t
@@ -12,9 +14,11 @@ from app.bot.utils.attendance_helpers import (
     has_attendance_response,
 )
 from app.bot.utils.booking_labels import format_admin_booking_button
-from app.models import Booking, BookingStatus
+from app.models import Booking, BookingStatus, Service
 from app.repositories import BookingRepository
 from app.utils.datetime_utils import now_local, to_local_naive
+
+logger = logging.getLogger(__name__)
 
 BOOKINGS_PAGE_SIZE = 10
 BOOKINGS_SECTIONS = frozenset(
@@ -195,6 +199,16 @@ def parse_admin_confirm_callback(data: str) -> tuple[int, BookingDetailSource]:
         back = ":".join(parts[2:])
         return booking_id, parse_attendance_back(back)
     return booking_id, BookingDetailSource(section="active", page=0)
+
+
+def parse_admin_simple_booking_id(data: str, prefix: str) -> int | None:
+    """Parse adm_cancel:{id} / adm_msg:{id}; None when id token is missing or non-numeric."""
+    if not data.startswith(prefix):
+        return None
+    token = data[len(prefix) :].split(":", 1)[0]
+    if not token.isdigit():
+        return None
+    return int(token)
 
 
 def booking_detail_action_flags(
@@ -511,3 +525,47 @@ def parse_bookings_list_callback(data: str) -> tuple[str, int]:
     section = resolve_bookings_list_section(parts[2] if len(parts) > 2 else DEFAULT_BOOKINGS_SECTION)
     page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
     return section, page
+
+
+@dataclass(frozen=True)
+class AdminConfirmBookingResult:
+    booking: Booking | None
+    service: Service | None = None
+    already_confirmed: bool = False
+    cancelled: bool = False
+    not_found: bool = False
+    client_notified: bool = False
+
+
+async def confirm_booking_by_admin(
+    bot: Bot,
+    booking_id: int,
+) -> AdminConfirmBookingResult:
+    """Confirm a pending booking once: persist status, notify client, sync calendar."""
+    from app.database.session import async_session_factory
+    from app.repositories import BookingRepository, ServiceRepository
+    from app.services.booking_service import BookingService
+    from app.services.booking_notification_service import (
+        notify_client_booking_confirmed_by_admin,
+        schedule_calendar_auth_admin_notify,
+    )
+
+    async with async_session_factory() as session:
+        booking = await BookingRepository(session).get_by_id(booking_id)
+        if not booking:
+            return AdminConfirmBookingResult(None, not_found=True)
+        service = await ServiceRepository(session).get_by_id(booking.service_id)
+        if booking.status == BookingStatus.CANCELLED:
+            return AdminConfirmBookingResult(booking, service, cancelled=True)
+        if booking.status == BookingStatus.CONFIRMED:
+            return AdminConfirmBookingResult(booking, service, already_confirmed=True)
+        booking = await BookingService(session).confirm_booking(booking_id)
+        service = await ServiceRepository(session).get_by_id(booking.service_id)
+
+    client_notified = await notify_client_booking_confirmed_by_admin(bot, booking, service)
+    schedule_calendar_auth_admin_notify(bot)
+    return AdminConfirmBookingResult(
+        booking,
+        service,
+        client_notified=client_notified,
+    )

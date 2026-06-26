@@ -48,7 +48,11 @@ from app.repositories import (
     ServiceRepository,
     SettingsRepository,
 )
-from app.services.admin_bookings_service import parse_admin_confirm_callback
+from app.services.admin_bookings_service import (
+    confirm_booking_by_admin,
+    parse_admin_confirm_callback,
+    parse_admin_simple_booking_id,
+)
 from app.services.booking_service import BookingService
 from app.services.booking_notification_service import (
     notify_client_booking_cancelled_by_admin,
@@ -967,39 +971,24 @@ async def admin_confirm_booking(callback: CallbackQuery, is_admin: bool, lang: s
         await safe_edit_text(callback.message, t(lang, "not_found"))
         return
     t_total = time.perf_counter()
-    t_db = 0.0
-    client = None
-    try:
-        t0 = time.perf_counter()
-        async with async_session_factory() as session:
-            booking = await BookingService(session).confirm_booking(booking_id)
-            service = await ServiceRepository(session).get_by_id(booking.service_id)
-            client = await session.get(Client, booking.client_id)
-        t_db = time.perf_counter() - t0
-    except ValueError:
+    t0 = time.perf_counter()
+    result = await confirm_booking_by_admin(callback.bot, booking_id)
+    t_db = time.perf_counter() - t0
+    if result.not_found:
         await safe_edit_text(callback.message, t(lang, "not_found"))
         return
-    t_notify = 0.0
-    if client:
-        client_lang = await resolve_client_lang_for_client(client)
-        try:
-            t0 = time.perf_counter()
-            await callback.bot.send_message(
-                client.telegram_id,
-                f"{t(client_lang, 'booking_confirmed_client')}\n{format_booking(booking, service, client_lang, show_location_comment=True)}",
-            )
-            t_notify = time.perf_counter() - t0
-        except Exception:
-            pass
-    schedule_calendar_auth_admin_notify(callback.bot)
+    if result.cancelled:
+        await safe_edit_text(callback.message, t(lang, "booking_cannot_confirm_cancelled"))
+        return
+    prefix = t(lang, "booking_already_confirmed") if result.already_confirmed else None
     log_action_timing(
         "admin confirm booking",
         booking_id=booking_id,
         db=t_db,
-        notify=t_notify,
+        notify=0.0 if result.already_confirmed else t_db,
         total=time.perf_counter() - t_total,
     )
-    await show_booking_detail(callback, lang, booking_id, source)
+    await show_booking_detail(callback, lang, booking_id, source, prefix=prefix)
 
 
 @router.callback_query(F.data.startswith("adm_cancel:"))
@@ -1009,7 +998,10 @@ async def admin_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: st
         return
 
     await safe_callback_answer(callback)
-    booking_id = int(callback.data.split(":", 1)[1])
+    booking_id = parse_admin_simple_booking_id(callback.data, "adm_cancel:")
+    if booking_id is None:
+        await safe_edit_text(callback.message, t(lang, "not_found"))
+        return
 
     async with async_session_factory() as session:
         booking = await BookingRepository(session).get_by_id(booking_id)
@@ -1050,7 +1042,10 @@ async def admin_cancel_booking(callback: CallbackQuery, is_admin: bool, lang: st
 async def admin_message_client(callback: CallbackQuery, state: FSMContext, is_admin: bool, lang: str) -> None:
     if not is_admin:
         return
-    booking_id = int(callback.data.split(":", 1)[1])
+    booking_id = parse_admin_simple_booking_id(callback.data, "adm_msg:")
+    if booking_id is None:
+        await safe_callback_answer(callback, t(lang, "not_found"), show_alert=True)
+        return
     await state.update_data(msg_booking_id=booking_id, flow_origin="admin")
     await state.set_state(AdminMessageStates.entering_message)
     await callback.message.answer(t(lang, "enter_message_client"), reply_markup=cancel_kb(lang))

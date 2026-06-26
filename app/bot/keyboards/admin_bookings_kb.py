@@ -134,3 +134,24 @@ def admin_booking_detail_kb(
         )
     rows.append([InlineKeyboardButton(text=t(lang, "back"), callback_data=back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def admin_new_booking_notification_kb(booking_id: int, lang: str = "ru") -> InlineKeyboardMarkup:
+    source = BookingDetailSource(section="pending_admin", page=0)
+    back = encode_attendance_back(source)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "confirm_booking_btn"),
+                    callback_data=f"adm_confirm:{booking_id}:{back}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "cancel_booking_btn"),
+                    callback_data=f"adm_cancel:{booking_id}",
+                )
+            ],
+        ]
+    )

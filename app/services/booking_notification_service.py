@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 
 from aiogram import Bot
 
+from app.bot.i18n import t
 from app.config import get_settings
 from app.models import Booking, Service, ServiceOrder
 from app.services.language_service import get_user_language, resolve_client_lang_for_client
@@ -71,6 +72,80 @@ async def _notify_admins(bot: Bot, build_text: TextBuilder) -> None:
                 admin_id,
                 exc_info=True,
             )
+
+
+async def notify_admins_new_booking(
+    bot: Bot,
+    booking: Booking,
+    service: Service | None,
+) -> None:
+    from app.bot.keyboards.admin_bookings_kb import admin_new_booking_notification_kb
+    from app.utils.formatting import format_booking
+
+    username = await _load_client_username(booking.client_id)
+
+    async def build_text(admin_lang: str) -> str:
+        return (
+            f"{t(admin_lang, 'new_booking_admin')}\n\n"
+            f"{format_booking(booking, service, admin_lang, admin_view=True, client_username=username)}"
+        )
+
+    settings = get_settings()
+    if not settings.admin_ids:
+        return
+    for admin_id in settings.admin_ids:
+        admin_lang = await get_user_language(admin_id)
+        try:
+            text = await _resolve_text_builder(build_text, admin_lang)
+        except Exception:
+            logger.warning(
+                "Failed to build new booking admin notification for admin_id=%s",
+                admin_id,
+                exc_info=True,
+            )
+            continue
+        try:
+            await bot.send_message(
+                admin_id,
+                text,
+                reply_markup=admin_new_booking_notification_kb(booking.id, admin_lang),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to notify admin %s about new booking",
+                admin_id,
+                exc_info=True,
+            )
+
+
+async def notify_client_booking_confirmed_by_admin(
+    bot: Bot,
+    booking: Booking,
+    service: Service | None,
+) -> bool:
+    from app.database.session import async_session_factory
+    from app.models import Client
+    from app.utils.formatting import format_booking
+
+    async with async_session_factory() as session:
+        client = await session.get(Client, booking.client_id)
+    if not client:
+        return False
+    client_lang = await resolve_client_lang_for_client(client)
+    try:
+        await bot.send_message(
+            client.telegram_id,
+            f"{t(client_lang, 'booking_confirmed_client')}\n"
+            f"{format_booking(booking, service, client_lang, show_location_comment=True)}",
+        )
+        return True
+    except Exception:
+        logger.warning(
+            "Failed to notify client about admin confirmation booking_id=%s",
+            booking.id,
+            exc_info=True,
+        )
+        return False
 
 
 async def notify_admins_client_cancelled(

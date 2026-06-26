@@ -95,6 +95,8 @@ async def show_booking_detail(
     lang: str,
     booking_id: int,
     source: BookingDetailSource,
+    *,
+    prefix: str | None = None,
 ) -> None:
     async with async_session_factory() as session:
         booking = await BookingRepository(session).get_by_id(booking_id)
@@ -105,9 +107,12 @@ async def show_booking_detail(
         return
     username = client.username if client else None
     show_send = is_manual_attendance_send_eligible(booking)
+    text = format_booking(booking, service, lang, admin_view=True, client_username=username)
+    if prefix:
+        text = f"{prefix}\n\n{text}"
     await safe_edit_text(
         callback.message,
-        format_booking(booking, service, lang, admin_view=True, client_username=username),
+        text,
         reply_markup=admin_booking_detail_kb(
             booking,
             source,

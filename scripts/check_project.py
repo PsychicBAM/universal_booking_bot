@@ -2921,6 +2921,191 @@ def main() -> int:
         return 1
 
     try:
+        import asyncio
+        import inspect
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.bot.handlers import admin as admin_handlers
+        from app.bot.i18n import t
+        from app.bot.keyboards.admin_bookings_kb import (
+            admin_booking_detail_kb,
+            admin_new_booking_notification_kb,
+        )
+        from app.models import BookingStatus
+        from app.services.admin_bookings_service import (
+            AdminConfirmBookingResult,
+            BookingDetailSource,
+            confirm_booking_by_admin,
+            parse_admin_confirm_callback,
+        )
+        from app.utils.datetime_utils import now_local
+        from app.utils.formatting import format_booking
+
+        admin_src = inspect.getsource(admin_handlers.admin_confirm_booking)
+        if "confirm_booking_by_admin" not in admin_src:
+            raise AssertionError("test A — admin confirm handler must call confirm_booking_by_admin")
+
+        notif_kb = admin_new_booking_notification_kb(55, lang="ru")
+        notif_cbs = [btn.callback_data for row in notif_kb.inline_keyboard for btn in row]
+        confirm_notif_cb = next(cb for cb in notif_cbs if cb and cb.startswith("adm_confirm:"))
+        parsed_id, _ = parse_admin_confirm_callback(confirm_notif_cb)
+        if parsed_id != 55:
+            raise AssertionError("test A — notification confirm callback must parse booking id")
+
+        fixed_now = now_local()
+        source = BookingDetailSource(section="active", page=0)
+        def _booking_ns(bid, status, start_at):
+            return SimpleNamespace(
+                id=bid,
+                status=status,
+                start_at=start_at,
+                end_at=start_at + timedelta(hours=1),
+                service_id=1,
+                client_id=1,
+                client_name="Test",
+                client_phone=None,
+                location_text=None,
+                client_comment=None,
+                attendance_status=None,
+                service_location_id=None,
+                service_location_title=None,
+                service_location_address=None,
+            )
+
+        pending = _booking_ns(30, BookingStatus.PENDING, fixed_now + timedelta(hours=3))
+        confirmed = _booking_ns(30, BookingStatus.CONFIRMED, fixed_now + timedelta(hours=3))
+        service = SimpleNamespace(id=1, name="Lesson", requires_location=False, ask_client_comment=False)
+
+        async def fake_confirm(booking_id: int):
+            return confirmed
+
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock()
+        mock_session = MagicMock()
+        mock_session_cm = MagicMock()
+        mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_cm.__aexit__ = AsyncMock(return_value=None)
+        with patch("app.database.session.async_session_factory", return_value=mock_session_cm), patch(
+            "app.repositories.BookingRepository"
+        ) as repo_cls, patch(
+            "app.repositories.ServiceRepository"
+        ) as svc_repo_cls, patch(
+            "app.services.booking_service.BookingService"
+        ) as booking_svc_cls, patch(
+            "app.services.booking_notification_service.notify_client_booking_confirmed_by_admin",
+            new=AsyncMock(return_value=True),
+        ) as notify_mock, patch(
+            "app.services.booking_notification_service.schedule_calendar_auth_admin_notify",
+        ):
+            repo_cls.return_value.get_by_id = AsyncMock(return_value=pending)
+            svc_repo_cls.return_value.get_by_id = AsyncMock(return_value=service)
+            booking_svc_cls.return_value.confirm_booking = AsyncMock(side_effect=fake_confirm)
+            result = asyncio.run(confirm_booking_by_admin(mock_bot, 30))
+        if result.booking is None or result.booking.status != BookingStatus.CONFIRMED:
+            raise AssertionError("test B — confirm must set booking status to CONFIRMED")
+        if notify_mock.await_count != 1:
+            raise AssertionError("test B — confirm must notify client once")
+
+        confirmed_kb = admin_booking_detail_kb(confirmed, source, lang="ru")
+        confirmed_cbs = [btn.callback_data for row in confirmed_kb.inline_keyboard for btn in row]
+        if not any(cb and cb.startswith("adm_att:send:") for cb in confirmed_cbs):
+            raise AssertionError("test C — confirmed detail keyboard must include manual attendance button")
+
+        detail_text = format_booking(confirmed, service, "ru", admin_view=True)
+        if t("ru", "booking_status_label", status=t("ru", "booking_status_confirmed")) not in detail_text:
+            raise AssertionError("test D — confirmed detail must show booking status confirmed")
+        if t("ru", "client_response_label", response=t("ru", "client_response_no_response")) not in detail_text:
+            raise AssertionError("test D — confirmed detail must show client response no response")
+
+        notify_mock.reset_mock()
+        with patch("app.database.session.async_session_factory", return_value=mock_session_cm), patch(
+            "app.repositories.BookingRepository"
+        ) as repo_cls, patch(
+            "app.repositories.ServiceRepository"
+        ) as svc_repo_cls, patch(
+            "app.services.booking_service.BookingService"
+        ), patch(
+            "app.services.booking_notification_service.notify_client_booking_confirmed_by_admin",
+            new=AsyncMock(return_value=True),
+        ) as notify_mock2, patch(
+            "app.services.booking_notification_service.schedule_calendar_auth_admin_notify",
+        ):
+            repo_cls.return_value.get_by_id = AsyncMock(return_value=confirmed)
+            svc_repo_cls.return_value.get_by_id = AsyncMock(return_value=service)
+            already = asyncio.run(confirm_booking_by_admin(mock_bot, 30))
+        if not already.already_confirmed:
+            raise AssertionError("test E — already confirmed booking must be detected")
+        if notify_mock2.await_count != 0:
+            raise AssertionError("test E — already confirmed must not send duplicate client notification")
+
+        cancelled = _booking_ns(31, BookingStatus.CANCELLED, fixed_now + timedelta(hours=3))
+        with patch("app.database.session.async_session_factory", return_value=mock_session_cm), patch(
+            "app.repositories.BookingRepository"
+        ) as repo_cls, patch(
+            "app.repositories.ServiceRepository"
+        ) as svc_repo_cls, patch(
+            "app.services.booking_service.BookingService"
+        ) as booking_svc_cls, patch(
+            "app.services.booking_notification_service.notify_client_booking_confirmed_by_admin",
+            new=AsyncMock(return_value=True),
+        ) as notify_mock3, patch(
+            "app.services.booking_notification_service.schedule_calendar_auth_admin_notify",
+        ):
+            repo_cls.return_value.get_by_id = AsyncMock(return_value=cancelled)
+            svc_repo_cls.return_value.get_by_id = AsyncMock(return_value=service)
+            booking_svc_cls.return_value.confirm_booking = AsyncMock()
+            cancelled_result = asyncio.run(confirm_booking_by_admin(mock_bot, 31))
+        if not cancelled_result.cancelled:
+            raise AssertionError("test F — cancelled booking cannot be confirmed")
+        if booking_svc_cls.return_value.confirm_booking.await_count != 0:
+            raise AssertionError("test F — cancelled booking must not call confirm_booking")
+        if notify_mock3.await_count != 0:
+            raise AssertionError("test F — cancelled booking must not notify client")
+
+        pending_kb = admin_booking_detail_kb(pending, source, lang="ru")
+        pending_cbs = [btn.callback_data for row in pending_kb.inline_keyboard for btn in row]
+        if not any(cb and cb.startswith("adm_confirm:") for cb in pending_cbs):
+            raise AssertionError("test G — pending booking must include confirm button")
+        if any(cb and cb.startswith("adm_att:send:") for cb in pending_cbs):
+            raise AssertionError("test G — pending booking must not include manual attendance button")
+
+        if not any(cb and cb.startswith("adm_att:send:") for cb in confirmed_cbs):
+            raise AssertionError("test H — confirmed future booking must include manual attendance button")
+
+        from app.services.admin_bookings_service import parse_admin_simple_booking_id
+
+        if parse_admin_simple_booking_id("adm_cancel:42", "adm_cancel:") != 42:
+            raise AssertionError("test I — adm_cancel id parser")
+        if parse_admin_simple_booking_id("adm_cancel:abc", "adm_cancel:") is not None:
+            raise AssertionError("test I — adm_cancel abc must be rejected")
+        if parse_admin_simple_booking_id("adm_msg:7", "adm_msg:") != 7:
+            raise AssertionError("test J — adm_msg id parser")
+
+        print("OK: unified admin booking confirm (tests A–J)")
+    except Exception as exc:
+        print(f"FAIL: unified admin booking confirm — {exc}")
+        return 1
+
+    try:
+        import scripts.audit_keyboards as audit_keyboards
+        import scripts.audit_callbacks as audit_callbacks
+
+        kb_code = audit_keyboards.main()
+        if kb_code != 0:
+            print("FAIL: scripts/audit_keyboards.py")
+            return kb_code
+        cb_code = audit_callbacks.main()
+        if cb_code != 0:
+            print("FAIL: scripts/audit_callbacks.py")
+            return cb_code
+        print("OK: audit_keyboards + audit_callbacks")
+    except Exception as exc:
+        print(f"FAIL: keyboard/callback audits — {exc}")
+        return 1
+
+    try:
         import scripts.smoke_e2e as smoke_e2e
 
         smoke_code = smoke_e2e.main()
